@@ -1,0 +1,168 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  ARRIVAL_SLICE_DEFINITION,
+  ARRIVAL_SLICE_IDS,
+  ARRIVAL_SLICE_POSITIONS,
+  ARRIVAL_SLICE_SEED,
+  ARRIVAL_TERRAIN_CELL_SIZE_METERS,
+  ARRIVAL_TERRAIN_ORIGIN,
+  ARRIVAL_TERRAIN_RESOLUTION,
+  ARRIVAL_TERRAIN_SIZE,
+  ArrivalSliceDefinitionValidationError,
+  arrivalTerrainHeight,
+  assertValidArrivalSliceDefinition,
+  getArrivalSliceAnchor,
+  validateArrivalSliceDefinition,
+} from './index.js';
+import type { ArrivalSliceDefinition } from './types.js';
+
+describe('Arrival slice definition', () => {
+  it('uses stable world coordinates and IDs', () => {
+    expect(ARRIVAL_SLICE_SEED).toBe(0x56494245);
+    expect(ARRIVAL_SLICE_IDS.arrivalShore).toBe('landmark.arrival-shore');
+    expect(ARRIVAL_SLICE_IDS.arrivalChime).toBe('interaction.arrival-chime');
+    expect(ARRIVAL_SLICE_IDS.crossing).toBe('mechanism.arrival-crossing');
+    expect(ARRIVAL_SLICE_IDS.loom).toBe('landmark.loom');
+    expect(ARRIVAL_SLICE_POSITIONS.arrivalSpawn).toEqual({ x: 0, y: 2, z: 112 });
+    expect(ARRIVAL_SLICE_POSITIONS.arrivalChime).toEqual({ x: 4, y: 11, z: 37 });
+    expect(ARRIVAL_SLICE_POSITIONS.loom).toEqual({ x: 0, y: 12, z: 0 });
+  });
+
+  it('is valid and has a deterministic serialized representation', () => {
+    expect(validateArrivalSliceDefinition()).toEqual([]);
+    expect(() => {
+      assertValidArrivalSliceDefinition();
+    }).not.toThrow();
+
+    const first = JSON.stringify(ARRIVAL_SLICE_DEFINITION);
+    const second = JSON.stringify(ARRIVAL_SLICE_DEFINITION);
+    expect(second).toBe(first);
+  });
+
+  it('defines one deterministic terrain grid for rendering and collision', () => {
+    expect(ARRIVAL_TERRAIN_SIZE).toEqual({ widthMeters: 160, depthMeters: 165 });
+    expect(ARRIVAL_TERRAIN_ORIGIN).toEqual({ x: -80, z: -24.5 });
+    expect(ARRIVAL_TERRAIN_CELL_SIZE_METERS).toBe(2.5);
+    expect(ARRIVAL_TERRAIN_RESOLUTION).toEqual({ columns: 65, rows: 67 });
+    expect(
+      ARRIVAL_TERRAIN_ORIGIN.x +
+        (ARRIVAL_TERRAIN_RESOLUTION.columns - 1) * ARRIVAL_TERRAIN_CELL_SIZE_METERS,
+    ).toBe(80);
+    expect(
+      ARRIVAL_TERRAIN_ORIGIN.z +
+        (ARRIVAL_TERRAIN_RESOLUTION.rows - 1) * ARRIVAL_TERRAIN_CELL_SIZE_METERS,
+    ).toBe(140.5);
+
+    const samples = [
+      [0, 112],
+      [9, 70],
+      [4, 37],
+      [1, 25.5],
+      [0, 0],
+      [-47.5, 91.25],
+    ] as const;
+    const firstPass = samples.map(([x, z]) => arrivalTerrainHeight(x, z));
+    const secondPass = samples.map(([x, z]) => arrivalTerrainHeight(x, z));
+    expect(secondPass).toEqual(firstPass);
+    expect(firstPass.every(Number.isFinite)).toBe(true);
+  });
+
+  it('keeps the raised crossing within the authored jump envelope', () => {
+    const activeSurfaceHeights = ARRIVAL_SLICE_DEFINITION.crossingSegments.map(
+      ({ activePosition, sizeMeters }) => activePosition.y + sizeMeters.y / 2,
+    );
+    expect(activeSurfaceHeights).toEqual([10.2, 10.2, 10.2]);
+    expect(
+      (activeSurfaceHeights[0] ?? Number.POSITIVE_INFINITY) - arrivalTerrainHeight(5, 33),
+    ).toBeLessThan(0.6);
+    expect(Math.abs((activeSurfaceHeights[2] ?? 0) - arrivalTerrainHeight(1, 16))).toBeLessThan(
+      0.1,
+    );
+  });
+
+  it('keeps every main-route anchor above its terrain sample', () => {
+    for (const step of ARRIVAL_SLICE_DEFINITION.route) {
+      const anchor = getArrivalSliceAnchor(step.anchorId);
+      expect(anchor, step.anchorId).toBeDefined();
+      if (anchor) {
+        expect(
+          anchor.position.y,
+          `${anchor.id} must remain above canonical terrain`,
+        ).toBeGreaterThan(arrivalTerrainHeight(anchor.position.x, anchor.position.z));
+      }
+    }
+  });
+
+  it('rejects non-finite terrain coordinates', () => {
+    expect(() => arrivalTerrainHeight(Number.NaN, 0)).toThrow(RangeError);
+    expect(() => arrivalTerrainHeight(0, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+  });
+
+  it('exposes the four distant region silhouettes', () => {
+    const silhouettes = ARRIVAL_SLICE_DEFINITION.content.distantSilhouettes;
+    expect(silhouettes.map(({ archetype }) => archetype)).toEqual([
+      'forest-basin',
+      'wind-canyon',
+      'sky-ruin',
+      'beacon-spire',
+    ]);
+    expect(silhouettes.map(({ anchorId }) => getArrivalSliceAnchor(anchorId)?.spatialRole)).toEqual(
+      ['backdrop', 'backdrop', 'backdrop', 'backdrop'],
+    );
+  });
+
+  it('rejects duplicate stable IDs', () => {
+    const duplicateAnchor = {
+      ...ARRIVAL_SLICE_DEFINITION.anchors[0],
+      position: { x: 1, y: 2, z: 100 },
+    };
+    const invalid: ArrivalSliceDefinition = {
+      ...ARRIVAL_SLICE_DEFINITION,
+      anchors: [...ARRIVAL_SLICE_DEFINITION.anchors, duplicateAnchor],
+    };
+
+    expect(validateArrivalSliceDefinition(invalid)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'duplicate-id',
+          path: `anchors[${ARRIVAL_SLICE_DEFINITION.anchors.length.toString()}].id`,
+        }),
+      ]),
+    );
+  });
+
+  it('rejects non-finite playable positions and missing references', () => {
+    const invalid: ArrivalSliceDefinition = {
+      ...ARRIVAL_SLICE_DEFINITION,
+      anchors: ARRIVAL_SLICE_DEFINITION.anchors.map((anchor) =>
+        anchor.id === ARRIVAL_SLICE_IDS.arrivalChime
+          ? { ...anchor, position: { ...anchor.position, x: Number.NaN } }
+          : anchor,
+      ),
+      route: ARRIVAL_SLICE_DEFINITION.route.map((step, index) =>
+        index === 1 ? { ...step, anchorId: 'missing.anchor' } : step,
+      ),
+    };
+
+    expect(validateArrivalSliceDefinition(invalid)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'invalid-position' }),
+        expect.objectContaining({ code: 'missing-reference' }),
+      ]),
+    );
+  });
+
+  it('throws a structured validation error', () => {
+    const invalid: ArrivalSliceDefinition = {
+      ...ARRIVAL_SLICE_DEFINITION,
+      interactions: ARRIVAL_SLICE_DEFINITION.interactions.map((interaction, index) =>
+        index === 0 ? { ...interaction, radiusMeters: 0 } : interaction,
+      ),
+    };
+
+    expect(() => {
+      assertValidArrivalSliceDefinition(invalid);
+    }).toThrow(ArrivalSliceDefinitionValidationError);
+  });
+});

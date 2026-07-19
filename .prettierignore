@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+pnpm-lock.yaml
+
+# Product documents are intentionally authored and reviewed separately.
+README.md
+GOALS.md
+PLAN.md
+docs/

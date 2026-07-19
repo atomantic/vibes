@@ -202,7 +202,7 @@ Open-world rules:
 - Authority owns collision, damage, inventory, collectible, puzzle, and interaction results.
 - Durable operations carry unique IDs and preconditions so retries cannot duplicate a shard, reward, or GitHub-triggering event.
 
-Rapier JS/WASM is the proposed physics layer because it provides a character-controller foundation, serialization, and cross-platform deterministic behavior when the version, initial conditions, insertion order, and all inputs are identical ([Rapier determinism](https://rapier.rs/docs/user_guides/javascript/determinism/)). The simulation must avoid assuming that unrelated JavaScript calculations such as platform-dependent transcendental functions are automatically deterministic.
+Rapier JS/WASM is the proposed physics layer because it provides a character-controller foundation and a fixed-step simulation suitable for the shared core. The standard JavaScript package is only treated as repeatable on the same machine when the version, initial conditions, insertion order, and inputs are identical. Cross-platform determinism requires a compatible deterministic build and controlled integration, and remains a Phase 0 proof obligation ([Rapier determinism](https://rapier.rs/docs/user_guides/javascript/determinism/)). The simulation must also avoid assuming that unrelated JavaScript calculations such as platform-dependent transcendental functions are deterministic.
 
 “Replay” has three deliberately different meanings:
 

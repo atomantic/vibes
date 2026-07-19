@@ -1,0 +1,21 @@
+{
+  "name": "@vibes/web",
+  "version": "0.0.0",
+  "private": true,
+  "license": "ISC",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@vibes/game-core": "workspace:*",
+    "@vibes/protocol": "workspace:*",
+    "@vibes/world": "workspace:*",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "three": "0.185.1"
+  }
+}

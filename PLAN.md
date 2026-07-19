@@ -4,7 +4,7 @@ Tactical delivery plan for Vibes. Strategic intent and milestone outcomes live i
 
 - **Last updated:** July 18, 2026
 - **Canonical repository:** `git@github.com:atomantic/vibes.git`
-- **Current state:** planning foundation; no playable build yet
+- **Current state:** first local playable foundation; networking and governance are not implemented yet
 
 ## Delivery strategy
 
@@ -38,9 +38,10 @@ The world lane and platform lane may proceed in parallel after Phase 0, but each
 ## Phase 0 — Foundation and risk retirement
 
 - [x] [planning-foundation] **Planning foundation.** Initialize the canonical repository and capture strategy, architecture, governance, initial-world design, marketing position, phased backlog, and source-backed decisions.
-- [ ] [license-and-contribution-model] **License and contribution model.** Select compatible code, asset, documentation, dependency, contribution, and model-weight policies before implementation or contributed art lands.
-- [ ] [workspace-and-ci-skeleton] **Workspace and CI skeleton.** Establish a strict TypeScript/pnpm monorepo, formatting, linting, unit tests, browser smoke tests, dependency review, build provenance, and minimal contributor guidance.
+- [x] [license-and-contribution-model] **License and contribution model.** Apply ISC to original repository code, documentation, and procedural content; retain upstream dependency licenses; require explicit compatible source licenses and attribution for future third-party assets and model weights.
+- [x] [workspace-and-ci-skeleton] **Workspace and CI skeleton.** Establish a strict TypeScript/pnpm monorepo, formatting, linting, unit tests, browser smoke tests, dependency review, build provenance, and minimal contributor guidance.
 - [ ] [renderer-and-physics-spike] **Renderer and physics spike.** Prove direct Three.js rendering, Rapier fixed-step simulation, worker boundaries, chunk coordinates, save/restore, and the visual/performance budget on reference laptops.
+  - Local direct-rendering, worker, fixed-step, chunk-coordinate, and application-checkpoint evidence is captured in [docs/IMPLEMENTATION_STATUS.md](./docs/IMPLEMENTATION_STATUS.md). Reference-hardware budgets and cross-platform replay claims remain open, so the parent item stays incomplete.
 - [ ] [authority-network-spike] **Authority network spike.** Validate browser-to-`Vibes Node` WebRTC DataChannels across Chrome, Firefox, and Safari; LAN, NAT, CGNAT, IPv6, TURN/UDP, TURN/TLS, reconnect, backpressure, eight-player soak, asymmetric partitions, stale-authority fencing, checkpoint transfer, and application-layer loss/jitter telemetry.
 - [ ] [device-identity-and-origin-spike] **Device identity and origin spike.** Prove key creation/storage, enrollment, loss and re-enrollment, official-origin to self-hosted-origin migration, browser-storage clearing, signed ready-session leases, and recovery without treating one device as one human.
 - [ ] [vibes-node-packaging-and-loopback-spike] **Vibes Node packaging and loopback spike.** Prove macOS/Windows/Linux native WebRTC loading, signed/notarized packages, install/update/rollback, and an origin-authenticated CSRF-resistant capability-scoped loopback API safe from arbitrary web pages.
@@ -53,7 +54,7 @@ The world lane and platform lane may proceed in parallel after Phase 0, but each
 
 ## Phase 1 — v0.1: A World Worth Sharing
 
-- [ ] [game-shell-and-input] **Game shell and input.** Build the loading, world, pause, settings, error, recovery, and diagnostics states with keyboard/mouse and gamepad input abstractions.
+- [x] [game-shell-and-input] **Game shell and input.** Build the loading, world, pause, settings, error, recovery, and diagnostics states with keyboard/mouse and gamepad input abstractions.
 - [ ] [representative-quality-corner] **Representative quality corner.** Finish one Arrival–Loom–region route with target art/audio, traversal, save, accessibility, asset streaming, and p95/1%-low performance; use it as a go/no-go gate before multiplying world content.
 - [ ] [resonance-reach-world] **Resonance Reach world.** Author the seamless 768×768-meter core, three distinct regions, the Loom social landmark, streaming chunks, content manifest, distant vistas, navigation landmarks, and collision proxy data.
 - [ ] [traversal-and-camera] **Traversal and camera.** Deliver responsive third-person run, sprint, jump, mantle, designated-surface climb, glider, camera collision, coyote time, input buffering, and tunable accessibility options.

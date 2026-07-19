@@ -6,7 +6,21 @@ Vibes is a self-hostable, browser-based multiplayer adventure where the players 
 
 The aim is both a game worth returning to and a new multiplayer development loop: playing produces evidence, consensus produces a traceable development proposal, and normal software delivery decides when and how accepted work becomes a release.
 
-> **Project status:** planning foundation. The repository does not yet contain a playable build. The first implementation target is the compact open-world vertical slice described in [Resonance Reach](./docs/FIRST_WORLD.md).
+> **Project status:** first playable foundation. The repository now contains a local single-player “First Light at the Loom” prototype of the compact open-world slice described in [Resonance Reach](./docs/FIRST_WORLD.md). Networking, player proposals, voting, local-model refinement, administration, and GitHub publication remain planned work—not implied capabilities of this build.
+
+## Play locally
+
+Vibes currently targets desktop browsers and requires Node.js 24 plus pnpm 11.9.0.
+
+```bash
+corepack enable
+pnpm install
+pnpm dev
+```
+
+Open the local URL printed by Vite. Use `WASD` to move, Shift to sprint, Space to jump, the mouse to look, `E` to interact, Escape to pause, and `F3` for diagnostics. A connected standard gamepad is also supported.
+
+Run the complete local quality gate with `pnpm check`; run production browser smoke tests with `pnpm test:e2e`. See [Contributing](./CONTRIBUTING.md) for setup details and [implementation status](./docs/IMPLEMENTATION_STATUS.md) for exact scope and open proof obligations.
 
 ## The core loop
 
@@ -39,11 +53,12 @@ See [Architecture](./docs/ARCHITECTURE.md) and [Governance](./docs/GOVERNANCE.md
 - [Governance](./docs/GOVERNANCE.md) — identity, trust, proposal lifecycle, unanimous voting, AI boundaries, and GitHub publication
 - [Resonance Reach](./docs/FIRST_WORLD.md) — the initial world, player experience, content budget, and measurable quality bar
 - [Marketing](./docs/MARKETING.md) — positioning, launch story, reusable copy, and messaging guardrails
+- [Implementation status](./docs/IMPLEMENTATION_STATUS.md) — what the first playable proves, what it does not, and the next evidence slice
 
 ## What Vibes is not
 
 Vibes is not a feature-for-feature clone of another game, a centralized MMO, an anonymous governance network, or a machine that deploys whatever an LLM writes. The first release focuses on small trusted communities, an original polished world, explicit human consent, and an auditable handoff into ordinary software delivery.
 
-## Repository policy still to decide
+## License
 
-The code and content licenses must be selected before implementation assets or third-party contributions land. The current recommendation is an open-source code license paired with a separately explicit content-asset license; the choice is tracked in [PLAN.md](./PLAN.md).
+Original code, documentation, and procedural content in this repository are licensed under the permissive [ISC License](./LICENSE). Dependencies retain their upstream licenses. Future third-party assets must record a compatible source license and attribution as described in [Contributing](./CONTRIBUTING.md).

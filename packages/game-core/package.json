@@ -1,0 +1,22 @@
+{
+  "name": "@vibes/game-core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "ISC",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d": "0.19.3",
+    "@vibes/protocol": "workspace:*",
+    "@vibes/world": "workspace:*",
+    "zod": "4.4.3"
+  }
+}
