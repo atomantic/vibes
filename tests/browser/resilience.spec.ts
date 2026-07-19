@@ -3,6 +3,10 @@ import { expect, test as base, type Page } from '@playwright/test';
 interface VibesTestHook {
   readonly ready: boolean;
   readonly tick: number;
+  readonly avatar: {
+    readonly status: 'loading' | 'ready' | 'fallback';
+    readonly kind: 'robot-expressive' | 'procedural';
+  };
 }
 
 interface RuntimeErrorCapture {
@@ -134,6 +138,51 @@ test('shows the fatal UI and removes a partially initialized renderer canvas', a
   await page.goto('/');
 
   await expectFatalInitialization(page, failureMessage);
+});
+
+test('keeps the procedural avatar playable when the robot model cannot be parsed', async ({
+  page,
+}) => {
+  await page.route('**/models/RobotExpressive.glb', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'model/gltf-binary',
+      body: 'intentionally invalid GLB data',
+    });
+  });
+
+  await openReadyWorld(page);
+  await page.waitForFunction(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return hook?.avatar.status === 'fallback';
+  });
+
+  const fallback = await page.evaluate(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    if (hook === undefined) throw new Error('Vibes diagnostics are unavailable');
+    return { tick: hook.tick, avatar: hook.avatar };
+  });
+  expect(fallback.avatar).toMatchObject({ status: 'fallback', kind: 'procedural' });
+
+  await page.keyboard.press('Enter');
+  await page.waitForFunction((previousTick) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return Boolean(hook && hook.tick > previousTick);
+  }, fallback.tick);
+  await expect(page.getByRole('status')).toHaveText('World ready');
+  await expect(page.locator("[data-testid='game-canvas']")).toBeVisible();
 });
 
 test('reaches World ready when settings persistence is unavailable', async ({ page }) => {

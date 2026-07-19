@@ -17,6 +17,13 @@ interface VibesTestHook {
   readonly frames: number;
   readonly contextLost: boolean;
   readonly paused: boolean;
+  readonly avatar: {
+    readonly status: 'loading' | 'ready' | 'fallback';
+    readonly kind: 'robot-expressive' | 'procedural';
+    readonly animation: 'idle' | 'walk' | 'run' | 'jump';
+    readonly activeClip: string | null;
+    readonly clips: readonly string[];
+  };
 }
 
 interface RuntimeFailureCapture {
@@ -103,6 +110,7 @@ async function readTestHook(page: Page): Promise<VibesTestHook> {
       frames: hook.frames,
       contextLost: hook.contextLost,
       paused: hook.paused,
+      avatar: { ...hook.avatar, clips: [...hook.avatar.clips] },
     };
   });
 }
@@ -139,11 +147,28 @@ test('loads the production world and advances the simulation', async ({ page }) 
     ).__VIBES_TEST__;
     return Boolean(hook && hook.position.z > 100);
   });
+  await page.waitForFunction(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return hook?.avatar.status === 'ready';
+  });
   await expect(page.locator('.save-status')).toBeEmpty();
 
   const initial = await readTestHook(page);
   expect(initial.contextLost).toBe(false);
   expect(initial.frames).toBeGreaterThan(0);
+  expect(initial.avatar).toMatchObject({
+    status: 'ready',
+    kind: 'robot-expressive',
+    animation: 'idle',
+    activeClip: 'Idle',
+  });
+  expect(initial.avatar.clips).toEqual(
+    expect.arrayContaining(['Idle', 'Walking', 'Running', 'Jump']),
+  );
 
   await page.keyboard.press('Enter');
   await canvas.click();
@@ -191,6 +216,24 @@ test('loads the production world and advances the simulation', async ({ page }) 
       Math.abs(hook.position.x - before.position.x) + Math.abs(hook.position.z - before.position.z);
     return horizontalMovement > 0.5;
   }, settled);
+
+  await page.waitForFunction(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return hook?.avatar.animation === 'run' && hook.avatar.activeClip === 'Running';
+  });
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return hook?.avatar.animation === 'jump' && hook.avatar.activeClip === 'Jump';
+  });
 
   await page.keyboard.up('w');
 

@@ -8,7 +8,7 @@
 
 The browser opens on Arrival Shore in a procedural corner of Resonance Reach. A player can enter the world, run, sprint, jump, use mouse or gamepad camera controls, attune the Arrival Chime, cross the responding path, awaken the Loom, find an optional vista, pause, adjust presentation settings, and restart or resume a locally saved journey.
 
-The build deliberately contains no downloaded art, audio, fonts, or model weights. The terrain, water, sky, landmarks, avatar, foliage, rocks, clouds, particles, and interface are generated from repository code so the new ISC licensing boundary is clear.
+The terrain, water, sky, landmarks, foliage, rocks, clouds, particles, interface, and procedural fallback avatar are generated from repository code. The player avatar now uses the audited CC0 `RobotExpressive.glb` model with rigged idle, walking, running, and jumping animations plus a Vibes runtime palette; its pinned source, integrity hash, and modifications are recorded in [Third-party notices](../THIRD_PARTY_NOTICES.md). No downloaded audio, fonts, textures, or model weights are included.
 
 ## Implementation shape
 

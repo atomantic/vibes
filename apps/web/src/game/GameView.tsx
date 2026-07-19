@@ -9,7 +9,7 @@ import {
 
 import { KeyboardInput } from './input/KeyboardInput';
 import { readArrivalSave } from './persistence';
-import { ThreeRenderer, type RenderMetrics } from './render/ThreeRenderer';
+import type { RenderMetrics, ThreeRenderer as ThreeRendererInstance } from './render/ThreeRenderer';
 import { LocalWorkerTransport } from './session/LocalWorkerTransport';
 
 const INPUT_INTERVAL_SECONDS = 1 / 30;
@@ -75,7 +75,7 @@ export function GameView({
     const container = containerRef.current;
     if (container === null) return;
 
-    let renderer: ThreeRenderer | null = null;
+    let renderer: ThreeRendererInstance | null = null;
     let input: KeyboardInput | null = null;
     let transport: LocalWorkerTransport | null = null;
     let testHook: VibesTestHook | undefined;
@@ -152,6 +152,7 @@ export function GameView({
         hook.frames += 1;
         hook.contextLost = renderer.contextLost;
         hook.paused = props.paused;
+        hook.avatar = renderer.avatarDiagnostics;
       }
 
       const metrics = renderer.metrics;
@@ -181,84 +182,92 @@ export function GameView({
       if (window.__VIBES_TEST__ === testHook) delete window.__VIBES_TEST__;
     };
 
-    try {
-      renderer = new ThreeRenderer(container);
-      input = new KeyboardInput();
-      transport = new LocalWorkerTransport();
+    const initialize = async (): Promise<void> => {
+      try {
+        const { ThreeRenderer } = await import('./render/ThreeRenderer');
+        if (cancelled) return;
+        renderer = new ThreeRenderer(container);
+        input = new KeyboardInput();
+        transport = new LocalWorkerTransport();
 
-      input.attach(renderer.canvas);
-      input.setSensitivityMultiplier(currentProps.current.cameraSensitivity);
-      input.setEnabled(currentProps.current.active && !currentProps.current.paused);
-      transportRef.current = transport;
-      inputRef.current = input;
+        input.attach(renderer.canvas);
+        input.setSensitivityMultiplier(currentProps.current.cameraSensitivity);
+        input.setEnabled(currentProps.current.active && !currentProps.current.paused);
+        transportRef.current = transport;
+        inputRef.current = input;
 
-      testHook = {
-        ready: false,
-        tick: 0,
-        position: { x: 0, y: 0, z: 0 },
-        yaw: 0,
-        camera: { yaw: 0, pitch: -0.24 },
-        setCamera: (yaw, pitch) => {
-          input?.setCamera(yaw, pitch);
-        },
-        frames: 0,
-        contextLost: false,
-        paused: currentProps.current.paused,
-      };
-      window.__VIBES_TEST__ = testHook;
+        testHook = {
+          ready: false,
+          tick: 0,
+          position: { x: 0, y: 0, z: 0 },
+          yaw: 0,
+          camera: { yaw: 0, pitch: -0.24 },
+          setCamera: (yaw, pitch) => {
+            input?.setCamera(yaw, pitch);
+          },
+          frames: 0,
+          contextLost: false,
+          paused: currentProps.current.paused,
+          avatar: renderer.avatarDiagnostics,
+        };
+        window.__VIBES_TEST__ = testHook;
 
-      document.addEventListener('pointerlockchange', onPointerLockChange);
-      document.addEventListener('visibilitychange', onVisibilityChange);
-      window.addEventListener('blur', suspendForFocusLoss);
+        document.addEventListener('pointerlockchange', onPointerLockChange);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        window.addEventListener('blur', suspendForFocusLoss);
 
-      unsubscribeSnapshot = transport.on('snapshot', (snapshot) => {
-        latestSnapshot = snapshot;
-        renderer?.setSnapshot(snapshot);
-        currentProps.current.onSnapshot(snapshot);
-        const hook = window.__VIBES_TEST__;
-        if (hook === undefined) return;
-
-        const player = snapshot.entities[0];
-        if (player !== undefined) {
-          hook.position = {
-            x: player.position.cellX * WORLD_CELL_SIZE + player.position.localX,
-            y: player.position.y,
-            z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
-          };
-          hook.yaw = player.yaw;
-        }
-        hook.tick = snapshot.tick;
-      });
-      unsubscribeEvent = transport.on('durableEvent', (event) => {
-        currentProps.current.onDurableEvent(event);
-      });
-      unsubscribeError = transport.on('error', (error) => {
-        currentProps.current.onError(error);
-      });
-
-      void transport
-        .connect()
-        .then((ready) => {
-          if (cancelled || transport === null) return;
-          const save = readArrivalSave();
-          if (save === undefined) transport.resetWorld();
-          else transport.loadSave(save);
-          transport.setPaused(!currentProps.current.active || currentProps.current.paused);
+        unsubscribeSnapshot = transport.on('snapshot', (snapshot) => {
+          latestSnapshot = snapshot;
+          renderer?.setSnapshot(snapshot);
+          currentProps.current.onSnapshot(snapshot);
           const hook = window.__VIBES_TEST__;
-          if (hook !== undefined) hook.ready = true;
-          currentProps.current.onReady(ready);
-        })
-        .catch((error: unknown) => {
-          if (cancelled) return;
-          cleanup();
-          reportInitializationFailure(error);
+          if (hook === undefined) return;
+
+          const player = snapshot.entities[0];
+          if (player !== undefined) {
+            hook.position = {
+              x: player.position.cellX * WORLD_CELL_SIZE + player.position.localX,
+              y: player.position.y,
+              z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
+            };
+            hook.yaw = player.yaw;
+          }
+          hook.tick = snapshot.tick;
+        });
+        unsubscribeEvent = transport.on('durableEvent', (event) => {
+          currentProps.current.onDurableEvent(event);
+        });
+        unsubscribeError = transport.on('error', (error) => {
+          currentProps.current.onError(error);
         });
 
-      animationFrame = window.requestAnimationFrame(renderFrame);
-    } catch (error) {
-      cleanup();
-      reportInitializationFailure(error);
-    }
+        void transport
+          .connect()
+          .then((ready) => {
+            if (cancelled || transport === null) return;
+            const save = readArrivalSave();
+            if (save === undefined) transport.resetWorld();
+            else transport.loadSave(save);
+            transport.setPaused(!currentProps.current.active || currentProps.current.paused);
+            const hook = window.__VIBES_TEST__;
+            if (hook !== undefined) hook.ready = true;
+            currentProps.current.onReady(ready);
+          })
+          .catch((error: unknown) => {
+            if (cancelled) return;
+            cleanup();
+            reportInitializationFailure(error);
+          });
+
+        animationFrame = window.requestAnimationFrame(renderFrame);
+      } catch (error) {
+        if (cancelled) return;
+        cleanup();
+        reportInitializationFailure(error);
+      }
+    };
+
+    void initialize();
 
     return cleanup;
   }, []);

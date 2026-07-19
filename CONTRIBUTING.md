@@ -38,4 +38,4 @@ pnpm exec playwright install chromium firefox webkit
 
 ## Licensing and assets
 
-Original code, documentation, and procedural content in this repository are available under the [ISC License](./LICENSE). Dependencies keep their upstream licenses. Any third-party model, texture, audio, font, or other asset must have a compatible redistribution license and land with its source, license, and attribution recorded; do not commit material of uncertain origin.
+Original code, documentation, and procedural content in this repository are available under the [ISC License](./LICENSE). Dependencies keep their upstream licenses. Any third-party model, texture, audio, font, or other asset must have a compatible redistribution license and land with its source, license, integrity hash, modifications, and attribution recorded in [Third-party notices](./THIRD_PARTY_NOTICES.md); do not commit material of uncertain origin.

@@ -63,4 +63,4 @@ Vibes is not a feature-for-feature clone of another game, a centralized MMO, an 
 
 ## License
 
-Original code, documentation, and procedural content in this repository are licensed under the permissive [ISC License](./LICENSE). Dependencies retain their upstream licenses. Future third-party assets must record a compatible source license and attribution as described in [Contributing](./CONTRIBUTING.md).
+Original code, documentation, and procedural content in this repository are licensed under the permissive [ISC License](./LICENSE). Dependencies and imported assets retain their upstream licenses. See [Third-party notices](./THIRD_PARTY_NOTICES.md) for asset provenance and [Contributing](./CONTRIBUTING.md) for the import policy.

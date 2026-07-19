@@ -57,11 +57,22 @@ import {
 } from '@vibes/world';
 import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
 
+import { selectAvatarAnimation, type AvatarAnimationState } from './avatarAnimation';
+import type { RobotAvatar } from './RobotAvatar';
+
 export interface RenderMetrics {
   readonly fps: number;
   readonly frameTimeMs: number;
   readonly drawCalls: number;
   readonly triangles: number;
+}
+
+export interface AvatarDiagnostics {
+  readonly status: 'loading' | 'ready' | 'fallback';
+  readonly kind: 'robot-expressive' | 'procedural';
+  readonly animation: AvatarAnimationState;
+  readonly activeClip: string | null;
+  readonly clips: readonly string[];
 }
 
 const COLOR = {
@@ -76,6 +87,7 @@ const COLOR = {
   coral: new Color('#f07f6d'),
 } as const;
 const AVATAR_VISUAL_VERTICAL_OFFSET_METERS = -0.37;
+const ROBOT_AVATAR_URL = `${import.meta.env.BASE_URL}models/RobotExpressive.glb`;
 const FULL_ROTATION_RADIANS = Math.PI * 2;
 
 function seededRandom(seed: number): () => number {
@@ -115,6 +127,7 @@ export class ThreeRenderer {
   readonly #scene = new Scene();
   readonly #camera = new PerspectiveCamera(68, 1, 0.1, 700);
   readonly #avatar = new Group();
+  readonly #proceduralAvatar = new Group();
   readonly #avatarTarget = new Vector3(
     ARRIVAL_SLICE_POSITIONS.arrivalSpawn.x,
     ARRIVAL_SLICE_POSITIONS.arrivalSpawn.y,
@@ -141,6 +154,10 @@ export class ThreeRenderer {
   };
   #playerVelocity = new Vector3();
   #playerYaw = 0;
+  #playerGrounded = true;
+  #avatarLoadStatus: AvatarDiagnostics['status'] = 'loading';
+  #avatarAnimation: AvatarAnimationState = 'idle';
+  #robotAvatar: RobotAvatar | null = null;
   #contextLost = false;
   #frameAccumulator = 0;
   #frameSamples = 0;
@@ -197,6 +214,7 @@ export class ThreeRenderer {
       this.#resizeObserver.observe(container);
       window.addEventListener('resize', this.#resize);
       this.#resize();
+      this.#loadRobotAvatar();
     } catch (error) {
       this.dispose();
       throw error;
@@ -211,6 +229,16 @@ export class ThreeRenderer {
     return this.#metrics;
   }
 
+  get avatarDiagnostics(): AvatarDiagnostics {
+    return {
+      status: this.#avatarLoadStatus,
+      kind: this.#avatarLoadStatus === 'ready' ? 'robot-expressive' : 'procedural',
+      animation: this.#avatarAnimation,
+      activeClip: this.#robotAvatar?.activeClip ?? null,
+      clips: this.#robotAvatar?.clipNames ?? [],
+    };
+  }
+
   setSnapshot(snapshot: SimulationSnapshot): void {
     const player = snapshot.entities[0];
     if (player !== undefined) {
@@ -221,6 +249,7 @@ export class ThreeRenderer {
       );
       this.#playerVelocity.set(...player.velocity);
       this.#playerYaw = player.yaw;
+      this.#playerGrounded = player.grounded;
     }
 
     if (!objectiveEquals(this.#objective, snapshot.objective)) {
@@ -244,9 +273,15 @@ export class ThreeRenderer {
     this.#avatar.position.lerp(this.#avatarTarget, smoothing);
     this.#avatar.rotation.y = lerpAngle(this.#avatar.rotation.y, this.#playerYaw, smoothing);
     const horizontalSpeed = Math.hypot(this.#playerVelocity.x, this.#playerVelocity.z);
+    this.#avatarAnimation = selectAvatarAnimation(
+      this.#playerGrounded,
+      horizontalSpeed,
+      this.#avatarAnimation,
+    );
+    this.#robotAvatar?.update(this.#avatarAnimation, horizontalSpeed, deltaSeconds);
     this.#avatar.rotation.z = MathUtils.lerp(
       this.#avatar.rotation.z,
-      Math.min(horizontalSpeed * 0.012, 0.09),
+      this.#avatarLoadStatus === 'ready' ? 0 : Math.min(horizontalSpeed * 0.012, 0.09),
       smoothing,
     );
 
@@ -289,6 +324,7 @@ export class ThreeRenderer {
     window.removeEventListener('resize', this.#resize);
     this.canvas.removeEventListener('webglcontextlost', this.#onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.#onContextRestored);
+    this.#robotAvatar?.dispose();
     this.#scene.traverse((object) => {
       const renderable = object as unknown as {
         readonly geometry?: unknown;
@@ -834,7 +870,7 @@ export class ThreeRenderer {
   }
 
   #buildAvatar(): void {
-    const visual = new Group();
+    const visual = this.#proceduralAvatar;
     visual.position.y = AVATAR_VISUAL_VERTICAL_OFFSET_METERS;
     const bodyMaterial = new MeshPhysicalMaterial({
       color: '#f0a46f',
@@ -875,6 +911,42 @@ export class ThreeRenderer {
     visual.add(scarf);
     this.#avatar.add(visual);
     this.#scene.add(this.#avatar);
+  }
+
+  #loadRobotAvatar(): void {
+    void import('./RobotAvatar')
+      .then(({ loadRobotAvatar }) => {
+        if (this.#disposed) return;
+        return loadRobotAvatar(ROBOT_AVATAR_URL);
+      })
+      .then((robotAvatar) => {
+        if (robotAvatar === undefined) return;
+        if (this.#disposed) {
+          robotAvatar.dispose();
+          return;
+        }
+
+        this.#robotAvatar = robotAvatar;
+        this.#avatar.add(robotAvatar.visual);
+        robotAvatar.update(
+          this.#avatarAnimation,
+          Math.hypot(this.#playerVelocity.x, this.#playerVelocity.z),
+          0,
+        );
+        this.#proceduralAvatar.visible = false;
+        this.#avatarLoadStatus = 'ready';
+      })
+      .catch(() => {
+        this.#showAvatarFallback();
+      });
+  }
+
+  #showAvatarFallback(): void {
+    if (this.#disposed) return;
+    this.#robotAvatar?.dispose();
+    this.#robotAvatar = null;
+    this.#avatarLoadStatus = 'fallback';
+    this.#proceduralAvatar.visible = true;
   }
 
   #buildDust(): { points: Points; base: Float32Array } {

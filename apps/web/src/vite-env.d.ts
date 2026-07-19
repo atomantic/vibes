@@ -10,6 +10,7 @@ interface VibesTestHook {
   frames: number;
   contextLost: boolean;
   paused: boolean;
+  avatar: import('./game/render/ThreeRenderer').AvatarDiagnostics;
 }
 
 interface Window {
