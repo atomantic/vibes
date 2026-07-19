@@ -66,6 +66,7 @@ const test = base.extend<RuntimeFailureCapture>({
 
 async function openReadyWorld(page: Page): Promise<void> {
   await page.goto('/');
+  await expect(page).toHaveTitle('Vibes — First Light at the Loom');
   await page.waitForFunction(() => {
     const hook = (
       globalThis as typeof globalThis & {
@@ -127,12 +128,25 @@ test.afterEach(async ({ page }, testInfo) => {
 test('loads the production world and advances the simulation', async ({ page }) => {
   await openReadyWorld(page);
 
+  const canvas = page.locator("[data-testid='game-canvas']");
+  await expect(canvas).toHaveAttribute('aria-describedby', 'game-control-instructions');
+  await expect(page.locator('#game-control-instructions')).toContainText('W A S D to move');
+  await page.waitForFunction(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return Boolean(hook && hook.position.z > 100);
+  });
+  await expect(page.locator('.save-status')).toBeEmpty();
+
   const initial = await readTestHook(page);
   expect(initial.contextLost).toBe(false);
   expect(initial.frames).toBeGreaterThan(0);
 
   await page.keyboard.press('Enter');
-  await page.locator("[data-testid='game-canvas']").click();
+  await canvas.click();
   await page.waitForFunction(() => {
     const hook = (
       globalThis as typeof globalThis & {
@@ -231,6 +245,141 @@ test('pauses simulation ticks while rendering remains responsive', async ({ page
   expect(afterFrames.frames).toBeGreaterThan(paused.frames);
   expect(afterFrames.tick).toBe(paused.tick);
   expect(afterFrames.contextLost).toBe(false);
+
+  const resumeButton = page.getByRole('button', { name: /Resume journey/ });
+  const restartButton = page.getByRole('button', { name: 'Restart journey' });
+  await expect(resumeButton).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(restartButton).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(resumeButton).toBeFocused();
+
+  await page.getByRole('checkbox', { name: /Reduced motion/ }).check();
+  await expect(page.locator('html')).toHaveAttribute('data-reduced-motion', 'true');
+  const pauseAnimationDurationMs = await page.locator('.pause-panel').evaluate((panel) => {
+    const duration = globalThis.getComputedStyle(panel).animationDuration;
+    return Number.parseFloat(duration) * (duration.endsWith('ms') ? 1 : 1_000);
+  });
+  expect(pauseAnimationDurationMs).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ width: 700, height: 320 });
+  const pausePanelScroll = await page.locator('.pause-panel').evaluate((panel) => ({
+    clientHeight: panel.clientHeight,
+    overflowY: globalThis.getComputedStyle(panel).overflowY,
+    scrollHeight: panel.scrollHeight,
+  }));
+  expect(pausePanelScroll.overflowY).toBe('auto');
+  expect(pausePanelScroll.scrollHeight).toBeGreaterThan(pausePanelScroll.clientHeight);
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.pause-panel')).toBeHidden();
+  await expect(page.locator("[data-testid='game-canvas']")).toBeFocused();
+});
+
+test('pauses and releases held movement when the browser loses focus', async ({ page }) => {
+  await openReadyWorld(page);
+  await page.keyboard.press('Enter');
+
+  const beforeMovement = await readTestHook(page);
+  await page.keyboard.down('w');
+  await page.waitForFunction((before) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    if (hook === undefined) return false;
+    return (
+      Math.hypot(hook.position.x - before.position.x, hook.position.z - before.position.z) > 0.5
+    );
+  }, beforeMovement);
+
+  await page.evaluate(() => {
+    globalThis.dispatchEvent(new Event('blur'));
+  });
+  await expect(page.getByRole('dialog', { name: 'Paused' })).toBeVisible();
+  const paused = await readTestHook(page);
+  await page.waitForTimeout(350);
+  const frozen = await readTestHook(page);
+  expect(frozen.tick).toBe(paused.tick);
+
+  await page.getByRole('button', { name: /Resume journey/ }).click();
+  await page.waitForFunction(() => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return hook?.paused === false;
+  });
+  const resumed = await readTestHook(page);
+  await page.waitForTimeout(250);
+  const settled = await readTestHook(page);
+  await page.keyboard.up('w');
+
+  expect(
+    Math.hypot(settled.position.x - resumed.position.x, settled.position.z - resumed.position.z),
+  ).toBeLessThan(0.05);
+});
+
+test('keeps the Loom announcement when its checkpoint is recorded in the same tick', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const NativeWorker = globalThis.Worker;
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      value: new Proxy(NativeWorker, {
+        construct(target, argumentsList) {
+          const worker = Reflect.construct(target, argumentsList) as Worker;
+          Object.defineProperty(globalThis, '__VIBES_AUTHORITY_WORKER__', {
+            configurable: true,
+            value: worker,
+          });
+          return worker;
+        },
+      }),
+    });
+  });
+  await openReadyWorld(page);
+
+  await page.evaluate(() => {
+    const worker = (
+      globalThis as typeof globalThis & {
+        __VIBES_AUTHORITY_WORKER__?: Worker;
+      }
+    ).__VIBES_AUTHORITY_WORKER__;
+    if (worker === undefined) throw new Error('The local authority worker was not captured');
+
+    worker.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'durable-event',
+          tick: 42,
+          eventId: 'test:loom-awakened',
+          eventType: 'loom-awakened',
+          entityId: 'landmark.loom',
+          payload: { loomAwakened: true },
+        },
+      }),
+    );
+    worker.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'durable-event',
+          tick: 42,
+          eventId: 'test:checkpoint-reached',
+          eventType: 'checkpoint-reached',
+          entityId: 'landmark.loom',
+          payload: { checkpoint: 'loom' },
+        },
+      }),
+    );
+  });
+
+  await expect(page.locator('.announcement')).toHaveText(
+    'The Loom wakes. Three empty Shard sockets call across the Reach.',
+  );
 });
 
 test('honors reduced motion without losing the accessible shell', async ({ page }) => {

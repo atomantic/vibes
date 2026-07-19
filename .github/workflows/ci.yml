@@ -76,8 +76,6 @@ jobs:
       - name: Install Firefox software renderer
         if: matrix.browser == 'firefox'
         run: sudo apt-get install --yes --no-install-recommends libgl1 libgl1-mesa-dri libglx-mesa0
-      - name: Build production client
-        run: pnpm build
       - name: Run browser checks
         if: matrix.browser != 'firefox'
         run: pnpm test:e2e --project=${{ matrix.browser }}

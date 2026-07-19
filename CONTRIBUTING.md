@@ -12,6 +12,8 @@ pnpm install
 pnpm dev
 ```
 
+The development server runs at [http://127.0.0.1:5175](http://127.0.0.1:5175) and hot-reloads source changes. The browser suite builds its own fresh production bundle before starting the preview server.
+
 Before submitting a change, run:
 
 ```bash

@@ -13,5 +13,5 @@ interface VibesTestHook {
 }
 
 interface Window {
-  __VIBES_TEST__: VibesTestHook;
+  __VIBES_TEST__?: VibesTestHook;
 }

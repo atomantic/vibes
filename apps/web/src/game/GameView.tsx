@@ -75,28 +75,13 @@ export function GameView({
     const container = containerRef.current;
     if (container === null) return;
 
-    const renderer = new ThreeRenderer(container);
-    const input = new KeyboardInput();
-    const transport = new LocalWorkerTransport();
-    window.__VIBES_TEST__ = {
-      ready: false,
-      tick: 0,
-      position: { x: 0, y: 0, z: 0 },
-      yaw: 0,
-      camera: { yaw: 0, pitch: -0.24 },
-      setCamera: (yaw, pitch) => {
-        input.setCamera(yaw, pitch);
-      },
-      frames: 0,
-      contextLost: false,
-      paused: currentProps.current.paused,
-    };
-    input.attach(renderer.canvas);
-    input.setSensitivity(currentProps.current.cameraSensitivity);
-    input.setEnabled(currentProps.current.active && !currentProps.current.paused);
-    transportRef.current = transport;
-    inputRef.current = input;
-
+    let renderer: ThreeRenderer | null = null;
+    let input: KeyboardInput | null = null;
+    let transport: LocalWorkerTransport | null = null;
+    let testHook: VibesTestHook | undefined;
+    let unsubscribeSnapshot: (() => void) | null = null;
+    let unsubscribeEvent: (() => void) | null = null;
+    let unsubscribeError: (() => void) | null = null;
     let latestSnapshot: SimulationSnapshot | null = null;
     let inputAccumulator = 0;
     let inputSequence = 1;
@@ -106,44 +91,45 @@ export function GameView({
     let previousMetrics: RenderMetrics | null = null;
     let hadPointerLock = false;
     let cancelled = false;
+    let cleanedUp = false;
+
+    const reportInitializationFailure = (error: unknown): void => {
+      currentProps.current.onError({
+        type: 'simulation-error',
+        code: 'initialization-failed',
+        message: error instanceof Error ? error.message : String(error),
+        recoverable: false,
+      });
+    };
+
+    const suspendForFocusLoss = (): void => {
+      const props = currentProps.current;
+      if (!props.active || props.paused || input === null || transport === null) return;
+
+      input.setEnabled(false);
+      transport.setPaused(true);
+      props.onPauseRequest();
+    };
 
     const onPointerLockChange = (): void => {
-      if (document.pointerLockElement === renderer.canvas) {
+      if (renderer !== null && document.pointerLockElement === renderer.canvas) {
         hadPointerLock = true;
-      } else if (hadPointerLock && currentProps.current.active && !currentProps.current.paused) {
-        currentProps.current.onPauseRequest();
+      } else if (hadPointerLock) {
+        suspendForFocusLoss();
       }
     };
-    document.addEventListener('pointerlockchange', onPointerLockChange);
-
-    const unsubscribeSnapshot = transport.on('snapshot', (snapshot) => {
-      latestSnapshot = snapshot;
-      renderer.setSnapshot(snapshot);
-      currentProps.current.onSnapshot(snapshot);
-      const player = snapshot.entities[0];
-      if (player !== undefined) {
-        window.__VIBES_TEST__.position = {
-          x: player.position.cellX * WORLD_CELL_SIZE + player.position.localX,
-          y: player.position.y,
-          z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
-        };
-        window.__VIBES_TEST__.yaw = player.yaw;
-      }
-      window.__VIBES_TEST__.tick = snapshot.tick;
-    });
-    const unsubscribeEvent = transport.on('durableEvent', (event) => {
-      currentProps.current.onDurableEvent(event);
-    });
-    const unsubscribeError = transport.on('error', (error) => {
-      currentProps.current.onError(error);
-    });
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'hidden') suspendForFocusLoss();
+    };
 
     const renderFrame = (time: number): void => {
+      if (cancelled || renderer === null || input === null || transport === null) return;
+
       const deltaSeconds = Math.min((time - previousTime) / 1_000, 0.1);
       previousTime = time;
       elapsedSeconds += deltaSeconds;
       const props = currentProps.current;
-      input.setSensitivity(props.cameraSensitivity);
+      input.setSensitivityMultiplier(props.cameraSensitivity);
       input.setEnabled(props.active && !props.paused);
 
       if (props.active && !props.paused) {
@@ -160,10 +146,13 @@ export function GameView({
 
       const camera = input.camera;
       renderer.render(deltaSeconds, elapsedSeconds, camera, props.reducedMotion);
-      window.__VIBES_TEST__.camera = { ...camera };
-      window.__VIBES_TEST__.frames += 1;
-      window.__VIBES_TEST__.contextLost = renderer.contextLost;
-      window.__VIBES_TEST__.paused = props.paused;
+      const hook = window.__VIBES_TEST__;
+      if (hook !== undefined) {
+        hook.camera = { ...camera };
+        hook.frames += 1;
+        hook.contextLost = renderer.contextLost;
+        hook.paused = props.paused;
+      }
 
       const metrics = renderer.metrics;
       if (metrics !== previousMetrics) {
@@ -173,48 +162,112 @@ export function GameView({
       animationFrame = window.requestAnimationFrame(renderFrame);
     };
 
-    void transport
-      .connect()
-      .then((ready) => {
-        if (cancelled) return;
-        const save = readArrivalSave();
-        if (save === undefined) transport.resetWorld();
-        else transport.loadSave(save);
-        transport.setPaused(!currentProps.current.active || currentProps.current.paused);
-        window.__VIBES_TEST__.ready = true;
-        currentProps.current.onReady(ready);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        currentProps.current.onError({
-          type: 'simulation-error',
-          code: 'initialization-failed',
-          message: error instanceof Error ? error.message : String(error),
-          recoverable: false,
-        });
-      });
-
-    animationFrame = window.requestAnimationFrame(renderFrame);
-
-    return () => {
+    const cleanup = (): void => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       cancelled = true;
       window.cancelAnimationFrame(animationFrame);
-      unsubscribeSnapshot();
-      unsubscribeEvent();
-      unsubscribeError();
+      unsubscribeSnapshot?.();
+      unsubscribeEvent?.();
+      unsubscribeError?.();
       document.removeEventListener('pointerlockchange', onPointerLockChange);
-      input.detach();
-      transport.dispose();
-      renderer.dispose();
-      transportRef.current = null;
-      inputRef.current = null;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', suspendForFocusLoss);
+      input?.detach();
+      transport?.dispose();
+      renderer?.dispose();
+      if (transportRef.current === transport) transportRef.current = null;
+      if (inputRef.current === input) inputRef.current = null;
+      if (window.__VIBES_TEST__ === testHook) delete window.__VIBES_TEST__;
     };
+
+    try {
+      renderer = new ThreeRenderer(container);
+      input = new KeyboardInput();
+      transport = new LocalWorkerTransport();
+
+      input.attach(renderer.canvas);
+      input.setSensitivityMultiplier(currentProps.current.cameraSensitivity);
+      input.setEnabled(currentProps.current.active && !currentProps.current.paused);
+      transportRef.current = transport;
+      inputRef.current = input;
+
+      testHook = {
+        ready: false,
+        tick: 0,
+        position: { x: 0, y: 0, z: 0 },
+        yaw: 0,
+        camera: { yaw: 0, pitch: -0.24 },
+        setCamera: (yaw, pitch) => {
+          input?.setCamera(yaw, pitch);
+        },
+        frames: 0,
+        contextLost: false,
+        paused: currentProps.current.paused,
+      };
+      window.__VIBES_TEST__ = testHook;
+
+      document.addEventListener('pointerlockchange', onPointerLockChange);
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      window.addEventListener('blur', suspendForFocusLoss);
+
+      unsubscribeSnapshot = transport.on('snapshot', (snapshot) => {
+        latestSnapshot = snapshot;
+        renderer?.setSnapshot(snapshot);
+        currentProps.current.onSnapshot(snapshot);
+        const hook = window.__VIBES_TEST__;
+        if (hook === undefined) return;
+
+        const player = snapshot.entities[0];
+        if (player !== undefined) {
+          hook.position = {
+            x: player.position.cellX * WORLD_CELL_SIZE + player.position.localX,
+            y: player.position.y,
+            z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
+          };
+          hook.yaw = player.yaw;
+        }
+        hook.tick = snapshot.tick;
+      });
+      unsubscribeEvent = transport.on('durableEvent', (event) => {
+        currentProps.current.onDurableEvent(event);
+      });
+      unsubscribeError = transport.on('error', (error) => {
+        currentProps.current.onError(error);
+      });
+
+      void transport
+        .connect()
+        .then((ready) => {
+          if (cancelled || transport === null) return;
+          const save = readArrivalSave();
+          if (save === undefined) transport.resetWorld();
+          else transport.loadSave(save);
+          transport.setPaused(!currentProps.current.active || currentProps.current.paused);
+          const hook = window.__VIBES_TEST__;
+          if (hook !== undefined) hook.ready = true;
+          currentProps.current.onReady(ready);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          cleanup();
+          reportInitializationFailure(error);
+        });
+
+      animationFrame = window.requestAnimationFrame(renderFrame);
+    } catch (error) {
+      cleanup();
+      reportInitializationFailure(error);
+    }
+
+    return cleanup;
   }, []);
 
   useEffect(() => {
     transportRef.current?.setPaused(!active || paused);
     inputRef.current?.setEnabled(active && !paused);
-    window.__VIBES_TEST__.paused = paused;
+    const hook = window.__VIBES_TEST__;
+    if (hook !== undefined) hook.paused = paused;
   }, [active, paused]);
 
   useEffect(() => {

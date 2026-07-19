@@ -129,7 +129,7 @@ export class ThreeRenderer {
   readonly #waterTime = { value: 0 };
   readonly #dust: Points;
   readonly #dustBase: Float32Array;
-  readonly #resizeObserver: ResizeObserver;
+  #resizeObserver: ResizeObserver | null = null;
   readonly #container: HTMLElement;
 
   #objective: ObjectiveSnapshot = {
@@ -145,6 +145,7 @@ export class ThreeRenderer {
   #frameAccumulator = 0;
   #frameSamples = 0;
   #metrics: RenderMetrics = { fps: 0, frameTimeMs: 0, drawCalls: 0, triangles: 0 };
+  #disposed = false;
 
   constructor(container: HTMLElement) {
     this.#container = container;
@@ -156,44 +157,50 @@ export class ThreeRenderer {
     this.canvas = this.#renderer.domElement;
     this.canvas.dataset['testid'] = 'game-canvas';
     this.canvas.setAttribute('aria-label', 'Resonance Reach game world');
+    this.canvas.setAttribute('aria-describedby', 'game-control-instructions');
     this.canvas.setAttribute('role', 'img');
     this.canvas.tabIndex = 0;
-    this.#renderer.outputColorSpace = SRGBColorSpace;
-    this.#renderer.toneMapping = ACESFilmicToneMapping;
-    this.#renderer.toneMappingExposure = 1.08;
-    this.#renderer.shadowMap.enabled = true;
-    this.#renderer.shadowMap.type = BasicShadowMap;
-    this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
-    container.append(this.canvas);
+    try {
+      this.#renderer.outputColorSpace = SRGBColorSpace;
+      this.#renderer.toneMapping = ACESFilmicToneMapping;
+      this.#renderer.toneMappingExposure = 1.08;
+      this.#renderer.shadowMap.enabled = true;
+      this.#renderer.shadowMap.type = BasicShadowMap;
+      container.append(this.canvas);
 
-    this.canvas.addEventListener('webglcontextlost', this.#onContextLost);
-    this.canvas.addEventListener('webglcontextrestored', this.#onContextRestored);
+      this.canvas.addEventListener('webglcontextlost', this.#onContextLost);
+      this.canvas.addEventListener('webglcontextrestored', this.#onContextRestored);
 
-    this.#scene.background = COLOR.skyHorizon;
-    this.#scene.fog = new FogExp2('#8db5af', 0.0038);
+      this.#scene.background = COLOR.skyHorizon;
+      this.#scene.fog = new FogExp2('#8db5af', 0.0038);
 
-    this.#buildLights();
-    this.#buildSky();
-    this.#buildTerrain();
-    this.#buildWater();
-    this.#buildPathRibbon();
-    this.#buildArrivalChime();
-    this.#buildCrossing();
-    this.#buildLoom();
-    this.#buildSilhouettes();
-    this.#buildScatter();
-    this.#buildAvatar();
-    const dust = this.#buildDust();
-    this.#dust = dust.points;
-    this.#dustBase = dust.base;
+      this.#buildLights();
+      this.#buildSky();
+      this.#buildTerrain();
+      this.#buildWater();
+      this.#buildPathRibbon();
+      this.#buildArrivalChime();
+      this.#buildCrossing();
+      this.#buildLoom();
+      this.#buildSilhouettes();
+      this.#buildScatter();
+      this.#buildAvatar();
+      const dust = this.#buildDust();
+      this.#dust = dust.points;
+      this.#dustBase = dust.base;
 
-    this.#avatar.position.copy(this.#avatarTarget);
-    this.#camera.position.set(7, 7, 120);
-    this.#camera.lookAt(this.#avatar.position);
+      this.#avatar.position.copy(this.#avatarTarget);
+      this.#camera.position.set(7, 7, 120);
+      this.#camera.lookAt(this.#avatar.position);
 
-    this.#resizeObserver = new ResizeObserver(this.#resize);
-    this.#resizeObserver.observe(container);
-    this.#resize();
+      this.#resizeObserver = new ResizeObserver(this.#resize);
+      this.#resizeObserver.observe(container);
+      window.addEventListener('resize', this.#resize);
+      this.#resize();
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
   }
 
   get contextLost(): boolean {
@@ -276,7 +283,10 @@ export class ThreeRenderer {
   }
 
   dispose(): void {
-    this.#resizeObserver.disconnect();
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#resizeObserver?.disconnect();
+    window.removeEventListener('resize', this.#resize);
     this.canvas.removeEventListener('webglcontextlost', this.#onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.#onContextRestored);
     this.#scene.traverse((object) => {
@@ -924,6 +934,7 @@ export class ThreeRenderer {
     const height = Math.max(1, this.#container.clientHeight);
     this.#camera.aspect = width / height;
     this.#camera.updateProjectionMatrix();
+    this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     this.#renderer.setSize(width, height, false);
   };
 

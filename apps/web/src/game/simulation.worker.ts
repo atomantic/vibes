@@ -25,6 +25,10 @@ let latestInput: InputFrame = {
   buttons: 0,
 };
 
+function releaseInput(input: InputFrame): InputFrame {
+  return { ...input, buttons: 0, moveX: 0, moveZ: 0 };
+}
+
 function post(message: WorkerToClientMessage): void {
   worker.postMessage(message);
 }
@@ -63,10 +67,11 @@ worker.addEventListener('message', (event: MessageEvent<ClientToWorkerMessage>) 
         break;
       case 'set-paused':
         paused = message.paused;
+        if (paused) latestInput = releaseInput(latestInput);
         break;
       case 'reset-world':
         simulation.reset();
-        latestInput = { ...latestInput, buttons: 0, moveX: 0, moveZ: 0 };
+        latestInput = releaseInput(latestInput);
         postSnapshot();
         break;
     }

@@ -1,6 +1,11 @@
 import { InputButton, type InputFrame } from '@vibes/protocol';
 
 const TWO_PI = Math.PI * 2;
+const POINTER_LOOK_RADIANS_PER_PIXEL = 0.0022;
+const GAMEPAD_YAW_RADIANS_PER_SAMPLE = 0.045;
+const GAMEPAD_PITCH_RADIANS_PER_SAMPLE = 0.03;
+const MINIMUM_SENSITIVITY_MULTIPLIER = 0.35;
+const MAXIMUM_SENSITIVITY_MULTIPLIER = 2;
 
 function normalizeYaw(value: number): number {
   let normalized = value % TWO_PI;
@@ -19,7 +24,7 @@ export class KeyboardInput {
   #enabled = false;
   #yaw = 0;
   #pitch = -0.24;
-  #sensitivity = 0.0022;
+  #sensitivityMultiplier = 1;
 
   readonly #onKeyDown = (event: KeyboardEvent): void => {
     if (!this.#enabled || event.repeat) return;
@@ -36,8 +41,9 @@ export class KeyboardInput {
 
   readonly #onPointerMove = (event: PointerEvent): void => {
     if (!this.#enabled || document.pointerLockElement !== this.#canvas) return;
-    this.#yaw = normalizeYaw(this.#yaw - event.movementX * this.#sensitivity);
-    this.#pitch = clamp(this.#pitch - event.movementY * this.#sensitivity, -1.15, 0.55);
+    const sensitivity = POINTER_LOOK_RADIANS_PER_PIXEL * this.#sensitivityMultiplier;
+    this.#yaw = normalizeYaw(this.#yaw - event.movementX * sensitivity);
+    this.#pitch = clamp(this.#pitch - event.movementY * sensitivity, -1.15, 0.55);
   };
 
   readonly #onCanvasClick = (): void => {
@@ -86,8 +92,13 @@ export class KeyboardInput {
     }
   }
 
-  setSensitivity(value: number): void {
-    this.#sensitivity = clamp(value, 0.0006, 0.006);
+  setSensitivityMultiplier(value: number): void {
+    const multiplier = Number.isFinite(value) ? value : 1;
+    this.#sensitivityMultiplier = clamp(
+      multiplier,
+      MINIMUM_SENSITIVITY_MULTIPLIER,
+      MAXIMUM_SENSITIVITY_MULTIPLIER,
+    );
   }
 
   setCamera(yaw: number, pitch: number): void {
@@ -125,9 +136,17 @@ export class KeyboardInput {
 
       const cameraX = gamepad.axes[2] ?? 0;
       const cameraY = gamepad.axes[3] ?? 0;
-      if (Math.abs(cameraX) > 0.12) this.#yaw = normalizeYaw(this.#yaw - cameraX * 0.045);
+      if (Math.abs(cameraX) > 0.12) {
+        this.#yaw = normalizeYaw(
+          this.#yaw - cameraX * GAMEPAD_YAW_RADIANS_PER_SAMPLE * this.#sensitivityMultiplier,
+        );
+      }
       if (Math.abs(cameraY) > 0.12) {
-        this.#pitch = clamp(this.#pitch - cameraY * 0.03, -1.15, 0.55);
+        this.#pitch = clamp(
+          this.#pitch - cameraY * GAMEPAD_PITCH_RADIANS_PER_SAMPLE * this.#sensitivityMultiplier,
+          -1.15,
+          0.55,
+        );
       }
     }
 

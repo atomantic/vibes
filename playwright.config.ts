@@ -52,9 +52,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm preview',
+    command: 'pnpm build && pnpm preview',
     url: previewUrl,
-    reuseExistingServer: !process.env.CI,
+    // Never validate a stale Vibes bundle (or an unrelated process) that was
+    // already listening on the preview port.
+    reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe',

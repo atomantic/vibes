@@ -30,6 +30,7 @@ interface PlayerSettings {
 }
 
 const SETTINGS_KEY = 'vibes.player-settings.v1';
+const GAME_CONTROLS_DESCRIPTION_ID = 'game-control-instructions';
 
 const DEFAULT_OBJECTIVE: ObjectiveSnapshot = {
   arrivalChimeActivated: false,
@@ -105,18 +106,39 @@ export function App(): React.JSX.Element {
   });
   const [prompt, setPrompt] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
-  const [saveStatus, setSaveStatus] = useState('');
+  const [settingsPersistenceStatus, setSettingsPersistenceStatus] = useState('');
+  const [progressPersistenceStatus, setProgressPersistenceStatus] = useState('');
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [resetSequence, setResetSequence] = useState(0);
   const lastSaveRef = useRef('');
+  const initialSnapshotReceivedRef = useRef(false);
   const bestArrivalTimeRef = useRef(persistedArrival?.bestArrivalTimeMs);
   const previousLoomStateRef = useRef(persistedArrival?.loomAwakened ?? false);
   const arrivalTimerArmedRef = useRef(canTimeArrival(persistedArrival));
   const arrivalTimerActiveRef = useRef(false);
   const simulationTickRateRef = useRef(30);
   const resetPendingRef = useRef(false);
+  const pauseResumeButtonRef = useRef<HTMLButtonElement>(null);
+  const fatalRetryButtonRef = useRef<HTMLButtonElement>(null);
+  const announcementTimeoutRef = useRef<number | undefined>(undefined);
+  const progressStatusTimeoutRef = useRef<number | undefined>(undefined);
+  const announcementEventRef = useRef<{ readonly tick: number; readonly priority: number } | null>(
+    null,
+  );
 
   const currentObjective = useMemo(() => objectiveText(objective), [objective]);
+  const visiblePersistenceStatus = settingsPersistenceStatus || progressPersistenceStatus;
+
+  const showAnnouncement = useCallback((message: string): void => {
+    if (announcementTimeoutRef.current !== undefined) {
+      window.clearTimeout(announcementTimeoutRef.current);
+    }
+    setAnnouncement(message);
+    announcementTimeoutRef.current = window.setTimeout(() => {
+      setAnnouncement('');
+      announcementTimeoutRef.current = undefined;
+    }, 5_000);
+  }, []);
 
   const beginJourney = useCallback((): void => {
     setStarted(true);
@@ -127,8 +149,51 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty('--ui-scale', String(settings.uiScale));
-    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    root.dataset['reducedMotion'] = String(settings.reducedMotion);
+    try {
+      window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      setSettingsPersistenceStatus('');
+    } catch {
+      setSettingsPersistenceStatus('Settings kept for this session');
+    }
   }, [settings]);
+
+  useEffect(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>("[data-testid='game-canvas']");
+    if (canvas === null) return;
+
+    const previousDescription = canvas.getAttribute('aria-describedby');
+    canvas.setAttribute('aria-describedby', GAME_CONTROLS_DESCRIPTION_ID);
+    return () => {
+      if (previousDescription === null) canvas.removeAttribute('aria-describedby');
+      else canvas.setAttribute('aria-describedby', previousDescription);
+    };
+  }, [status]);
+
+  useEffect(() => {
+    if (!paused) return;
+
+    pauseResumeButtonRef.current?.focus();
+    return () => {
+      document.querySelector<HTMLCanvasElement>("[data-testid='game-canvas']")?.focus();
+    };
+  }, [paused]);
+
+  useEffect(() => {
+    if (fatalError !== null) fatalRetryButtonRef.current?.focus();
+  }, [fatalError]);
+
+  useEffect(
+    () => () => {
+      if (announcementTimeoutRef.current !== undefined) {
+        window.clearTimeout(announcementTimeoutRef.current);
+      }
+      if (progressStatusTimeoutRef.current !== undefined) {
+        window.clearTimeout(progressStatusTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -183,89 +248,121 @@ export function App(): React.JSX.Element {
     setStatus('World ready');
   }, []);
 
-  const handleSnapshot = useCallback((snapshot: SimulationSnapshot): void => {
-    setTick(snapshot.tick);
-    setObjective(snapshot.objective);
-    const player = snapshot.entities[0];
-    if (player !== undefined) {
-      setPosition({
-        x: player.position.cellX * 64 + player.position.localX,
-        y: player.position.y,
-        z: player.position.cellZ * 64 + player.position.localZ,
-      });
-    }
-
-    if (!snapshot.objective.loomAwakened) {
-      previousLoomStateRef.current = false;
-    } else if (!previousLoomStateRef.current) {
-      if (arrivalTimerActiveRef.current) {
-        const arrivalTimeMs = Math.round((snapshot.tick / simulationTickRateRef.current) * 1_000);
-        bestArrivalTimeRef.current = Math.min(
-          bestArrivalTimeRef.current ?? arrivalTimeMs,
-          arrivalTimeMs,
-        );
+  const handleSnapshot = useCallback(
+    (snapshot: SimulationSnapshot): void => {
+      const isInitialSnapshot = !initialSnapshotReceivedRef.current;
+      initialSnapshotReceivedRef.current = true;
+      setTick(snapshot.tick);
+      setObjective(snapshot.objective);
+      const player = snapshot.entities[0];
+      if (player !== undefined) {
+        setPosition({
+          x: player.position.cellX * 64 + player.position.localX,
+          y: player.position.y,
+          z: player.position.cellZ * 64 + player.position.localZ,
+        });
       }
-      previousLoomStateRef.current = true;
-      arrivalTimerArmedRef.current = false;
-      arrivalTimerActiveRef.current = false;
-    }
 
-    const save: ArrivalSliceSave = {
-      schemaVersion: 1,
-      worldSeed: ARRIVAL_SLICE_SEED,
-      arrivalChimeActivated: snapshot.objective.arrivalChimeActivated,
-      loomAwakened: snapshot.objective.loomAwakened,
-      optionalVistaFound: snapshot.objective.optionalVistaFound,
-      checkpoint: snapshot.objective.checkpoint,
-      ...(bestArrivalTimeRef.current === undefined
-        ? {}
-        : { bestArrivalTimeMs: bestArrivalTimeRef.current }),
-    };
-    const serialized = JSON.stringify(save);
-    if (serialized !== lastSaveRef.current) {
-      lastSaveRef.current = serialized;
-      persistArrivalSave(save);
-      setSaveStatus('Journey saved');
-      window.setTimeout(() => {
-        setSaveStatus('');
-      }, 1_600);
-    }
-    if (
-      resetPendingRef.current &&
-      snapshot.tick === 0 &&
-      !snapshot.objective.arrivalChimeActivated &&
-      !snapshot.objective.loomAwakened &&
-      !snapshot.objective.optionalVistaFound &&
-      snapshot.objective.checkpoint === 'shore'
-    ) {
-      resetPendingRef.current = false;
-      setAnnouncement('The journey begins again at Arrival Shore.');
-    }
-  }, []);
+      if (!snapshot.objective.loomAwakened) {
+        previousLoomStateRef.current = false;
+      } else if (!previousLoomStateRef.current) {
+        if (arrivalTimerActiveRef.current) {
+          const arrivalTimeMs = Math.round((snapshot.tick / simulationTickRateRef.current) * 1_000);
+          bestArrivalTimeRef.current = Math.min(
+            bestArrivalTimeRef.current ?? arrivalTimeMs,
+            arrivalTimeMs,
+          );
+        }
+        previousLoomStateRef.current = true;
+        arrivalTimerArmedRef.current = false;
+        arrivalTimerActiveRef.current = false;
+      }
 
-  const handleDurableEvent = useCallback((event: DurableEvent): void => {
-    const caption =
-      event.eventType === 'arrival-chime-activated'
-        ? 'The Chime answers. Ancient stones rise across the hollow.'
-        : event.eventType === 'loom-awakened'
-          ? 'The Loom wakes. Three empty Shard sockets call across the Reach.'
-          : event.eventType === 'optional-vista-found'
-            ? 'A hidden resonance joins your journey.'
-            : 'A safe return point has been remembered.';
-    setAnnouncement(caption);
-    window.setTimeout(() => {
-      setAnnouncement('');
-    }, 5_000);
-  }, []);
+      const save: ArrivalSliceSave = {
+        schemaVersion: 1,
+        worldSeed: ARRIVAL_SLICE_SEED,
+        arrivalChimeActivated: snapshot.objective.arrivalChimeActivated,
+        loomAwakened: snapshot.objective.loomAwakened,
+        optionalVistaFound: snapshot.objective.optionalVistaFound,
+        checkpoint: snapshot.objective.checkpoint,
+        ...(bestArrivalTimeRef.current === undefined
+          ? {}
+          : { bestArrivalTimeMs: bestArrivalTimeRef.current }),
+      };
+      const serialized = JSON.stringify(save);
+      if (serialized !== lastSaveRef.current) {
+        lastSaveRef.current = serialized;
+        const persisted = persistArrivalSave(save);
+        if (!isInitialSnapshot) {
+          if (progressStatusTimeoutRef.current !== undefined) {
+            window.clearTimeout(progressStatusTimeoutRef.current);
+            progressStatusTimeoutRef.current = undefined;
+          }
+          setProgressPersistenceStatus(
+            persisted ? 'Journey saved' : 'Progress kept for this session',
+          );
+          if (persisted) {
+            progressStatusTimeoutRef.current = window.setTimeout(() => {
+              setProgressPersistenceStatus('');
+              progressStatusTimeoutRef.current = undefined;
+            }, 1_600);
+          }
+        }
+      }
+      if (
+        resetPendingRef.current &&
+        snapshot.tick === 0 &&
+        !snapshot.objective.arrivalChimeActivated &&
+        !snapshot.objective.loomAwakened &&
+        !snapshot.objective.optionalVistaFound &&
+        snapshot.objective.checkpoint === 'shore'
+      ) {
+        resetPendingRef.current = false;
+        showAnnouncement('The journey begins again at Arrival Shore.');
+      }
+    },
+    [showAnnouncement],
+  );
 
-  const handleError = useCallback((error: SimulationError): void => {
-    if (error.recoverable) {
-      setAnnouncement(`The world recovered from an input problem: ${error.message}`);
-    } else {
-      setFatalError(error.message);
-      setStatus('World unavailable');
-    }
-  }, []);
+  const handleDurableEvent = useCallback(
+    (event: DurableEvent): void => {
+      const priority = event.eventType === 'checkpoint-reached' ? 0 : 1;
+      const previousEvent = announcementEventRef.current;
+      if (
+        previousEvent !== null &&
+        previousEvent.tick === event.tick &&
+        previousEvent.priority > priority
+      ) {
+        return;
+      }
+
+      const caption =
+        event.eventType === 'arrival-chime-activated'
+          ? 'The Chime answers. Ancient stones rise across the hollow.'
+          : event.eventType === 'loom-awakened'
+            ? 'The Loom wakes. Three empty Shard sockets call across the Reach.'
+            : event.eventType === 'optional-vista-found'
+              ? 'A hidden resonance joins your journey.'
+              : 'A safe return point has been remembered.';
+      announcementEventRef.current = { tick: event.tick, priority };
+      showAnnouncement(caption);
+    },
+    [showAnnouncement],
+  );
+
+  const handleError = useCallback(
+    (error: SimulationError): void => {
+      if (error.recoverable) {
+        showAnnouncement(`The world recovered from an input problem: ${error.message}`);
+      } else {
+        setStarted(false);
+        setPaused(false);
+        setFatalError(error.message);
+        setStatus('World unavailable');
+      }
+    },
+    [showAnnouncement],
+  );
 
   const handlePauseRequest = useCallback((): void => {
     setPaused(true);
@@ -299,6 +396,12 @@ export function App(): React.JSX.Element {
         onMetrics={setMetrics}
         onPauseRequest={handlePauseRequest}
       />
+
+      <p id={GAME_CONTROLS_DESCRIPTION_ID} className="screen-reader-only">
+        Keyboard controls: press Enter to begin, W A S D to move, Shift to sprint, Space to jump, E
+        to interact, Escape to pause, and F3 to toggle diagnostics. Click the game world to look
+        with the mouse.
+      </p>
 
       <div className="cinematic-vignette" aria-hidden="true" />
       <header className="brand-lockup" aria-label="Vibes">
@@ -391,10 +494,30 @@ export function App(): React.JSX.Element {
           role="dialog"
           aria-modal="true"
           aria-labelledby="pause-title"
+          onKeyDown={(event) => {
+            if (event.key !== 'Tab') return;
+            const focusableElements = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(
+                'button:not(:disabled), input:not(:disabled)',
+              ),
+            );
+            const firstElement = focusableElements[0];
+            const lastElement = focusableElements.at(-1);
+            if (firstElement === undefined || lastElement === undefined) return;
+
+            if (event.shiftKey && document.activeElement === firstElement) {
+              event.preventDefault();
+              lastElement.focus();
+            } else if (!event.shiftKey && document.activeElement === lastElement) {
+              event.preventDefault();
+              firstElement.focus();
+            }
+          }}
         >
           <span className="eyebrow">THE WORLD IS WAITING</span>
           <h2 id="pause-title">Paused</h2>
           <button
+            ref={pauseResumeButtonRef}
             className="primary-button compact"
             type="button"
             onClick={() => {
@@ -447,6 +570,7 @@ export function App(): React.JSX.Element {
           <h1>Resonance interrupted</h1>
           <p>{fatalError}</p>
           <button
+            ref={fatalRetryButtonRef}
             className="primary-button"
             type="button"
             onClick={() => {
@@ -505,7 +629,7 @@ export function App(): React.JSX.Element {
         {announcement}
       </div>
       <div className="save-status" aria-live="polite">
-        {saveStatus}
+        {visiblePersistenceStatus}
       </div>
     </main>
   );
