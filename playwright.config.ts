@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const previewUrl = 'http://127.0.0.1:4173';
+const useFirefoxXvfb = process.env.VIBES_FIREFOX_XVFB === '1';
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -38,6 +39,7 @@ export default defineConfig({
         // GitHub's GPU-less Linux runners block WebGL2 unless Firefox is
         // allowed to use its software renderer.
         launchOptions: {
+          headless: !useFirefoxXvfb,
           firefoxUserPrefs: {
             'webgl.force-enabled': true,
           },

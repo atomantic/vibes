@@ -73,10 +73,20 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install browser
         run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+      - name: Install Firefox software renderer
+        if: matrix.browser == 'firefox'
+        run: sudo apt-get install --yes --no-install-recommends libgl1 libgl1-mesa-dri libglx-mesa0
       - name: Build production client
         run: pnpm build
       - name: Run browser checks
+        if: matrix.browser != 'firefox'
         run: pnpm test:e2e --project=${{ matrix.browser }}
+      - name: Run Firefox browser checks
+        if: matrix.browser == 'firefox'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          VIBES_FIREFOX_XVFB: '1'
+        run: xvfb-run --auto-servernum pnpm test:e2e --project=firefox
       - name: Upload browser diagnostics
         if: ${{ failure() }}
         uses: actions/upload-artifact@v5
