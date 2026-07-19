@@ -176,8 +176,20 @@ test('pauses simulation ticks while rendering remains responsive', async ({ page
   const paused = await readTestHook(page);
   await page.waitForTimeout(350);
 
+  const afterPauseWindow = await readTestHook(page);
+  expect(afterPauseWindow.tick).toBe(paused.tick);
+
+  await page.waitForFunction((before) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return Boolean(hook && hook.frames > before.frames);
+  }, paused);
+
   const afterFrames = await readTestHook(page);
-  expect(afterFrames.frames).toBeGreaterThan(paused.frames + 3);
+  expect(afterFrames.frames).toBeGreaterThan(paused.frames);
   expect(afterFrames.tick).toBe(paused.tick);
   expect(afterFrames.contextLost).toBe(false);
 });

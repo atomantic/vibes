@@ -33,7 +33,16 @@ export default defineConfig({
     },
     {
       name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
+      use: {
+        ...devices['Desktop Firefox'],
+        // GitHub's GPU-less Linux runners block WebGL2 unless Firefox is
+        // allowed to use its software renderer.
+        launchOptions: {
+          firefoxUserPrefs: {
+            'webgl.force-enabled': true,
+          },
+        },
+      },
     },
     {
       name: 'webkit',
