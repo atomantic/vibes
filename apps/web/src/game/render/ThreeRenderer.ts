@@ -76,6 +76,7 @@ const COLOR = {
   coral: new Color('#f07f6d'),
 } as const;
 const AVATAR_VISUAL_VERTICAL_OFFSET_METERS = -0.37;
+const FULL_ROTATION_RADIANS = Math.PI * 2;
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -100,6 +101,12 @@ function objectiveEquals(left: ObjectiveSnapshot, right: ObjectiveSnapshot): boo
     left.optionalVistaFound === right.optionalVistaFound &&
     left.checkpoint === right.checkpoint
   );
+}
+
+function lerpAngle(current: number, target: number, alpha: number): number {
+  const shortestDelta =
+    MathUtils.euclideanModulo(target - current + Math.PI, FULL_ROTATION_RADIANS) - Math.PI;
+  return current + shortestDelta * alpha;
 }
 
 export class ThreeRenderer {
@@ -228,7 +235,7 @@ export class ThreeRenderer {
   ): void {
     const smoothing = 1 - Math.exp(-deltaSeconds * 13);
     this.#avatar.position.lerp(this.#avatarTarget, smoothing);
-    this.#avatar.rotation.y = MathUtils.lerp(this.#avatar.rotation.y, this.#playerYaw, smoothing);
+    this.#avatar.rotation.y = lerpAngle(this.#avatar.rotation.y, this.#playerYaw, smoothing);
     const horizontalSpeed = Math.hypot(this.#playerVelocity.x, this.#playerVelocity.z);
     this.#avatar.rotation.z = MathUtils.lerp(
       this.#avatar.rotation.z,

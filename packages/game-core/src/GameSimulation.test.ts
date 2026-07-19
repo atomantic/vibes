@@ -4,7 +4,12 @@ import { InputButton } from '@vibes/protocol';
 import type { InputFrame, InteractionRequest } from '@vibes/protocol';
 import { ARRIVAL_SLICE_POSITIONS, ARRIVAL_SLICE_SEED } from '@vibes/world';
 
-import { FIXED_TICK_RATE, GameSimulation, JUMP_SPEED_METERS_PER_SECOND } from './index.js';
+import {
+  FIXED_TICK_RATE,
+  GameSimulation,
+  JUMP_SPEED_METERS_PER_SECOND,
+  RUN_SPEED_METERS_PER_SECOND,
+} from './index.js';
 
 function frame(
   sequence: number,
@@ -37,6 +42,68 @@ function playerPosition(simulation: GameSimulation): {
 }
 
 describe('GameSimulation', () => {
+  it.each([
+    {
+      label: 'forward after turning the camera right',
+      input: { moveX: 0, moveZ: 1, lookYaw: -Math.PI / 2 },
+      expectedX: RUN_SPEED_METERS_PER_SECOND,
+      expectedZ: 0,
+    },
+    {
+      label: 'forward after turning the camera left',
+      input: { moveX: 0, moveZ: 1, lookYaw: Math.PI / 2 },
+      expectedX: -RUN_SPEED_METERS_PER_SECOND,
+      expectedZ: 0,
+    },
+    {
+      label: 'right strafe after turning the camera left',
+      input: { moveX: 1, moveZ: 0, lookYaw: Math.PI / 2 },
+      expectedX: 0,
+      expectedZ: -RUN_SPEED_METERS_PER_SECOND,
+    },
+    {
+      label: 'normalized diagonal movement',
+      input: { moveX: 1, moveZ: 1, lookYaw: Math.PI / 4 },
+      expectedX: 0,
+      expectedZ: -RUN_SPEED_METERS_PER_SECOND,
+    },
+  ])('uses camera-relative axes for $label', ({ input, expectedX, expectedZ }) => {
+    const simulation = GameSimulation.create({
+      initialPosition: { ...ARRIVAL_SLICE_POSITIONS.arrivalSpawn, y: 20 },
+    });
+    try {
+      const player = simulation.step(frame(1, input)).snapshot.entities[0];
+      expect(player).toBeDefined();
+      if (player === undefined) return;
+
+      const horizontalSpeed = Math.hypot(player.velocity[0], player.velocity[2]);
+      expect(player.velocity[0]).toBeCloseTo(expectedX, 5);
+      expect(player.velocity[2]).toBeCloseTo(expectedZ, 5);
+      expect(horizontalSpeed).toBeCloseTo(RUN_SPEED_METERS_PER_SECOND, 5);
+      expect(-Math.sin(player.yaw)).toBeCloseTo(player.velocity[0] / horizontalSpeed, 5);
+      expect(-Math.cos(player.yaw)).toBeCloseTo(player.velocity[2] / horizontalSpeed, 5);
+    } finally {
+      simulation.dispose();
+    }
+  });
+
+  it('keeps the character facing its last travel direction while the camera orbits', () => {
+    const simulation = GameSimulation.create({
+      initialPosition: { ...ARRIVAL_SLICE_POSITIONS.arrivalSpawn, y: 20 },
+    });
+    try {
+      const moving = simulation.step(frame(1, { moveZ: 1, lookYaw: -Math.PI / 2 })).snapshot
+        .entities[0];
+      const idle = simulation.step(frame(2, { lookYaw: Math.PI / 2 })).snapshot.entities[0];
+
+      expect(moving).toBeDefined();
+      expect(idle).toBeDefined();
+      expect(idle?.yaw).toBeCloseTo(moving?.yaw ?? Number.NaN, 5);
+    } finally {
+      simulation.dispose();
+    }
+  });
+
   it('advances a dynamic capsule at a fixed 30 Hz', () => {
     const simulation = GameSimulation.create();
     try {

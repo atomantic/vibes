@@ -10,8 +10,11 @@ export type InputButtonMask = number;
 export interface InputFrame {
   readonly sequence: number;
   readonly intendedTick: number;
+  /** Camera-local horizontal axis: -1 left, +1 right. */
   readonly moveX: number;
+  /** Camera-local depth axis: -1 backward, +1 forward. */
   readonly moveZ: number;
+  /** Ground-plane camera orbit angle used to resolve movement into world space. */
   readonly lookYaw: number;
   readonly lookPitch: number;
   readonly buttons: InputButtonMask;

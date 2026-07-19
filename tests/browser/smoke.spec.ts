@@ -8,6 +8,12 @@ interface VibesTestHook {
     readonly y: number;
     readonly z: number;
   };
+  readonly yaw: number;
+  readonly camera: {
+    readonly yaw: number;
+    readonly pitch: number;
+  };
+  readonly setCamera?: (yaw: number, pitch: number) => void;
   readonly frames: number;
   readonly contextLost: boolean;
   readonly paused: boolean;
@@ -91,6 +97,8 @@ async function readTestHook(page: Page): Promise<VibesTestHook> {
       ready: hook.ready,
       tick: hook.tick,
       position: { ...hook.position },
+      yaw: hook.yaw,
+      camera: { ...hook.camera },
       frames: hook.frames,
       contextLost: hook.contextLost,
       paused: hook.paused,
@@ -133,6 +141,25 @@ test('loads the production world and advances the simulation', async ({ page }) 
     ).__VIBES_TEST__;
     return Boolean(hook && hook.tick >= 12);
   });
+  const beforeTurn = await readTestHook(page);
+  await page.evaluate((yaw) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    if (hook?.setCamera === undefined) throw new Error('Camera diagnostics are unavailable');
+    hook.setCamera(yaw, hook.camera.pitch);
+  }, -Math.PI / 2);
+  await page.waitForFunction((beforeYaw) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return Boolean(hook && Math.abs(hook.camera.yaw - beforeYaw) > 0.35);
+  }, beforeTurn.camera.yaw);
+
   const settled = await readTestHook(page);
   await page.keyboard.down('w');
 
@@ -154,7 +181,19 @@ test('loads the production world and advances the simulation', async ({ page }) 
   await page.keyboard.up('w');
 
   const moved = await readTestHook(page);
+  const displacementX = moved.position.x - settled.position.x;
+  const displacementZ = moved.position.z - settled.position.z;
+  const displacement = Math.hypot(displacementX, displacementZ);
+  const cameraForwardX = -Math.sin(settled.camera.yaw);
+  const cameraForwardZ = -Math.cos(settled.camera.yaw);
+  const facingX = -Math.sin(moved.yaw);
+  const facingZ = -Math.cos(moved.yaw);
+
   expect(moved.tick).toBeGreaterThan(settled.tick);
+  expect(
+    (displacementX * cameraForwardX + displacementZ * cameraForwardZ) / displacement,
+  ).toBeGreaterThan(0.85);
+  expect((displacementX * facingX + displacementZ * facingZ) / displacement).toBeGreaterThan(0.85);
   expect(moved.contextLost).toBe(false);
 });
 

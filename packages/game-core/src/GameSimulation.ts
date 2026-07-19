@@ -45,6 +45,7 @@ const GROUND_MAX_UPWARD_SPEED = 0.5;
 const CHECKPOINT_RADIUS_METERS = 4;
 const VISTA_RADIUS_METERS = 3.5;
 const RESPAWN_BOUNDS_PADDING_METERS = 8;
+const MOVEMENT_FACING_EPSILON = 0.0001;
 const KNOWN_INPUT_BUTTONS =
   InputButton.Jump | InputButton.Sprint | InputButton.Interact | InputButton.RecenterCamera;
 const PHYSICS_SNAPSHOT_MAGIC = 0x5649_4250;
@@ -545,10 +546,14 @@ export class GameSimulation {
     const speed = sprinting ? SPRINT_SPEED_METERS_PER_SECOND : RUN_SPEED_METERS_PER_SECOND;
     const cosine = Math.cos(this.currentInput.lookYaw);
     const sine = Math.sin(this.currentInput.lookYaw);
-    this.yaw = this.currentInput.lookYaw;
+    const worldX = normalizedX * cosine - normalizedZ * sine;
+    const worldZ = -normalizedX * sine - normalizedZ * cosine;
+    if (magnitude > MOVEMENT_FACING_EPSILON) {
+      this.yaw = Math.atan2(-worldX, -worldZ);
+    }
     return {
-      x: (normalizedX * cosine + normalizedZ * sine) * speed,
-      z: (normalizedX * sine - normalizedZ * cosine) * speed,
+      x: worldX * speed,
+      z: worldZ * speed,
     };
   }
 

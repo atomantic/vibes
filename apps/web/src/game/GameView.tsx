@@ -75,18 +75,22 @@ export function GameView({
     const container = containerRef.current;
     if (container === null) return;
 
+    const renderer = new ThreeRenderer(container);
+    const input = new KeyboardInput();
+    const transport = new LocalWorkerTransport();
     window.__VIBES_TEST__ = {
       ready: false,
       tick: 0,
       position: { x: 0, y: 0, z: 0 },
+      yaw: 0,
+      camera: { yaw: 0, pitch: -0.24 },
+      setCamera: (yaw, pitch) => {
+        input.setCamera(yaw, pitch);
+      },
       frames: 0,
       contextLost: false,
       paused: currentProps.current.paused,
     };
-
-    const renderer = new ThreeRenderer(container);
-    const input = new KeyboardInput();
-    const transport = new LocalWorkerTransport();
     input.attach(renderer.canvas);
     input.setSensitivity(currentProps.current.cameraSensitivity);
     input.setEnabled(currentProps.current.active && !currentProps.current.paused);
@@ -123,6 +127,7 @@ export function GameView({
           y: player.position.y,
           z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
         };
+        window.__VIBES_TEST__.yaw = player.yaw;
       }
       window.__VIBES_TEST__.tick = snapshot.tick;
     });
@@ -153,7 +158,9 @@ export function GameView({
         inputAccumulator = 0;
       }
 
-      renderer.render(deltaSeconds, elapsedSeconds, input.camera, props.reducedMotion);
+      const camera = input.camera;
+      renderer.render(deltaSeconds, elapsedSeconds, camera, props.reducedMotion);
+      window.__VIBES_TEST__.camera = { ...camera };
       window.__VIBES_TEST__.frames += 1;
       window.__VIBES_TEST__.contextLost = renderer.contextLost;
       window.__VIBES_TEST__.paused = props.paused;
