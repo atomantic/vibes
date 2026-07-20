@@ -15,6 +15,15 @@ export const ARRIVAL_TERRAIN_RESOLUTION = {
   rows: ARRIVAL_TERRAIN_SIZE.depthMeters / ARRIVAL_TERRAIN_CELL_SIZE_METERS + 1,
 } as const;
 
+export const ARRIVAL_POND = {
+  centerX: 11,
+  centerZ: 104,
+  radiusX: 7,
+  radiusZ: 4.5,
+  surfaceY: 0.58,
+  bedY: 0.18,
+} as const;
+
 interface GroundPathPoint extends Vec2 {
   readonly height: number;
 }
@@ -145,6 +154,15 @@ export function arrivalTerrainHeight(x: number, z: number): number {
   const crossingCarve = 1 - smoothstep01((crossingDistance - 0.72) / 0.25);
   const carvedHeight = 4.4 + (fractalNoise(x + 31, z - 17) - 0.5) * 0.35;
   height = lerp(height, carvedHeight, crossingCarve);
+
+  // A compact launch-view pond makes the water and dense grass treatments
+  // immediately inspectable without changing the main route through the shore.
+  const pondDistance = Math.sqrt(
+    ((x - ARRIVAL_POND.centerX) / ARRIVAL_POND.radiusX) ** 2 +
+      ((z - ARRIVAL_POND.centerZ) / ARRIVAL_POND.radiusZ) ** 2,
+  );
+  const pondBasin = 1 - smoothstep01((pondDistance - 0.7) / 0.3);
+  height = lerp(height, ARRIVAL_POND.bedY, pondBasin);
 
   // Quantization removes insignificant floating-point drift when the same
   // samples are serialized by different runtimes.

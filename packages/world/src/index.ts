@@ -11,6 +11,7 @@ export {
 export type { ArrivalSliceId } from './arrivalSlice.js';
 
 export {
+  ARRIVAL_POND,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
   ARRIVAL_TERRAIN_RESOLUTION,

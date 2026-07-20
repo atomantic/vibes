@@ -5,6 +5,7 @@ import {
   ARRIVAL_SLICE_IDS,
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_SLICE_SEED,
+  ARRIVAL_POND,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
   ARRIVAL_TERRAIN_RESOLUTION,
@@ -66,6 +67,21 @@ describe('Arrival slice definition', () => {
     const secondPass = samples.map(([x, z]) => arrivalTerrainHeight(x, z));
     expect(secondPass).toEqual(firstPass);
     expect(firstPass.every(Number.isFinite)).toBe(true);
+  });
+
+  it('places a shallow pond beside the launch route', () => {
+    expect(ARRIVAL_POND).toEqual({
+      centerX: 11,
+      centerZ: 104,
+      radiusX: 7,
+      radiusZ: 4.5,
+      surfaceY: 0.58,
+      bedY: 0.18,
+    });
+    expect(arrivalTerrainHeight(ARRIVAL_POND.centerX, ARRIVAL_POND.centerZ)).toBe(
+      ARRIVAL_POND.bedY,
+    );
+    expect(arrivalTerrainHeight(0, ARRIVAL_POND.centerZ)).toBeGreaterThan(ARRIVAL_POND.surfaceY);
   });
 
   it('keeps the raised crossing within the authored jump envelope', () => {

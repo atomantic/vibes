@@ -7,6 +7,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   CapsuleGeometry,
+  CircleGeometry,
   CatmullRomCurve3,
   CineonToneMapping,
   Color,
@@ -41,11 +42,13 @@ import {
   SRGBColorSpace,
   TorusGeometry,
   TubeGeometry,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three';
 import {
   ARRIVAL_SLICE_DEFINITION,
+  ARRIVAL_POND,
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
@@ -60,9 +63,12 @@ import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
 import { selectAvatarAnimation, type AvatarAnimationState } from './avatarAnimation';
 import type { RobotAvatar } from './RobotAvatar';
 import {
+  addStylizedWaterRipple,
   createStylizedGrassField,
+  createStylizedSeabedMaterial,
   createStylizedTerrainMaterial,
   createStylizedWaterMaterial,
+  createStylizedWaterState,
 } from './StylizedEnvironment';
 
 export interface RenderMetrics {
@@ -145,6 +151,11 @@ export class ThreeRenderer {
   readonly #crossingTargets = new Map<string, number>();
   readonly #resonanceMaterials: MeshStandardMaterial[] = [];
   readonly #waterTime = { value: 0 };
+  readonly #waterState = createStylizedWaterState(this.#waterTime);
+  readonly #lastWaterRipplePosition = new Vector2(
+    Number.POSITIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+  );
   readonly #dust: Points;
   readonly #dustBase: Float32Array;
   #resizeObserver: ResizeObserver | null = null;
@@ -168,6 +179,7 @@ export class ThreeRenderer {
   #frameSamples = 0;
   #metrics: RenderMetrics = { fps: 0, frameTimeMs: 0, drawCalls: 0, triangles: 0 };
   #disposed = false;
+  #nextWaterRippleTime = 0;
 
   constructor(container: HTMLElement) {
     this.#container = container;
@@ -317,6 +329,31 @@ export class ThreeRenderer {
     );
     this.#camera.position.lerp(this.#cameraDesired, 1 - Math.exp(-deltaSeconds * 9));
     this.#camera.lookAt(this.#cameraTarget);
+    this.#waterState.cameraXZ.value.set(this.#camera.position.x, this.#camera.position.z);
+
+    const avatarTerrainHeight = arrivalTerrainHeight(
+      this.#avatar.position.x,
+      this.#avatar.position.z,
+    );
+    const rippleDistance = Math.hypot(
+      this.#avatar.position.x - this.#lastWaterRipplePosition.x,
+      this.#avatar.position.z - this.#lastWaterRipplePosition.y,
+    );
+    if (
+      avatarTerrainHeight <= 0.35 &&
+      horizontalSpeed >= 0.65 &&
+      elapsedSeconds >= this.#nextWaterRippleTime &&
+      rippleDistance >= 0.7
+    ) {
+      addStylizedWaterRipple(
+        this.#waterState,
+        this.#avatar.position.x,
+        this.#avatar.position.z,
+        this.#waterTime.value,
+      );
+      this.#lastWaterRipplePosition.set(this.#avatar.position.x, this.#avatar.position.z);
+      this.#nextWaterRippleTime = elapsedSeconds + 0.32;
+    }
 
     this.#renderer.render(this.#scene, this.#camera);
     this.#recordMetrics(deltaSeconds);
@@ -458,14 +495,29 @@ export class ThreeRenderer {
   }
 
   #buildWater(): void {
-    const water = new Mesh(
-      new PlaneGeometry(420, 430, 1, 1),
-      createStylizedWaterMaterial(this.#waterTime),
-    );
+    const waterMaterial = createStylizedWaterMaterial(this.#waterState);
+    const water = new Mesh(new PlaneGeometry(420, 430, 1, 1), waterMaterial);
     water.rotation.x = -Math.PI / 2;
     water.position.set(0, 0.12, 38);
     water.renderOrder = 3;
     this.#scene.add(water);
+
+    const pondSeabed = new Mesh(
+      new CircleGeometry(1, 64),
+      createStylizedSeabedMaterial(this.#waterState),
+    );
+    pondSeabed.rotation.x = -Math.PI / 2;
+    pondSeabed.position.set(ARRIVAL_POND.centerX, ARRIVAL_POND.bedY + 0.02, ARRIVAL_POND.centerZ);
+    pondSeabed.scale.set(ARRIVAL_POND.radiusX * 0.76, ARRIVAL_POND.radiusZ * 0.76, 1);
+    pondSeabed.renderOrder = 2;
+    this.#scene.add(pondSeabed);
+
+    const pond = new Mesh(new CircleGeometry(1, 64), waterMaterial);
+    pond.rotation.x = -Math.PI / 2;
+    pond.position.set(ARRIVAL_POND.centerX, ARRIVAL_POND.surfaceY, ARRIVAL_POND.centerZ);
+    pond.scale.set(ARRIVAL_POND.radiusX * 0.74, ARRIVAL_POND.radiusZ * 0.74, 1);
+    pond.renderOrder = 3;
+    this.#scene.add(pond);
   }
 
   #buildPathRibbon(): void {
@@ -794,6 +846,31 @@ export class ThreeRenderer {
       random,
     });
     this.#scene.add(grass);
+
+    const launchGrass = createStylizedGrassField({
+      count: 53_000,
+      time: this.#waterTime,
+      heightAt: arrivalTerrainHeight,
+      random,
+      placement: {
+        centerX: ARRIVAL_POND.centerX,
+        centerZ: ARRIVAL_POND.centerZ,
+        radiusX: 14,
+        radiusZ: 16,
+        excludeRadiusX: ARRIVAL_POND.radiusX * 0.78,
+        excludeRadiusZ: ARRIVAL_POND.radiusZ * 0.78,
+        edgeSoftness: 0.3,
+      },
+      clearPath: true,
+      minTerrainHeight: ARRIVAL_POND.bedY + 0.05,
+      maxTerrainHeight: 3,
+      minBladeHeight: 0.42,
+      maxBladeHeight: 0.92,
+      minBladeWidth: 0.05,
+      maxBladeWidth: 0.085,
+      dirtInfluence: 0.08,
+    });
+    this.#scene.add(launchGrass);
 
     const coralGeometry = new ConeGeometry(0.22, 1.8, 5);
     const coralMaterial = new MeshStandardMaterial({

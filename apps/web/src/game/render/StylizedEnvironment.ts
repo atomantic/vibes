@@ -3,6 +3,7 @@ import {
   BufferGeometry,
   Color,
   DoubleSide,
+  FrontSide,
   InstancedMesh,
   Matrix4,
   MeshStandardMaterial,
@@ -82,11 +83,64 @@ export interface StylizedEnvironmentUniforms {
   readonly time: IUniform<number>;
 }
 
+const MAX_WATER_RIPPLES = 8;
+const MAX_WATER_RIPPLES_GLSL = '8';
+
+export interface StylizedWaterState {
+  readonly time: IUniform<number>;
+  readonly cameraXZ: IUniform<Vector2>;
+  readonly rippleCenters: readonly Vector2[];
+  readonly rippleTimes: Float32Array;
+  readonly rippleCount: IUniform<number>;
+  nextRippleIndex: number;
+}
+
+export function createStylizedWaterState(time: IUniform<number>): StylizedWaterState {
+  return {
+    time,
+    cameraXZ: { value: new Vector2() },
+    rippleCenters: Array.from({ length: MAX_WATER_RIPPLES }, () => new Vector2()),
+    rippleTimes: new Float32Array(MAX_WATER_RIPPLES),
+    rippleCount: { value: 0 },
+    nextRippleIndex: 0,
+  };
+}
+
+export function addStylizedWaterRipple(
+  state: StylizedWaterState,
+  x: number,
+  z: number,
+  startTime: number,
+): void {
+  const index = state.nextRippleIndex;
+  state.rippleCenters[index]?.set(x, z);
+  state.rippleTimes[index] = startTime;
+  state.rippleCount.value = Math.min(state.rippleCount.value + 1, MAX_WATER_RIPPLES);
+  state.nextRippleIndex = (index + 1) % MAX_WATER_RIPPLES;
+}
+
 export interface GrassFieldOptions {
   readonly count: number;
   readonly time: IUniform<number>;
   readonly heightAt: (x: number, z: number) => number;
   readonly random: () => number;
+  readonly placement?: {
+    readonly centerX: number;
+    readonly centerZ: number;
+    readonly radiusX: number;
+    readonly radiusZ: number;
+    readonly excludeRadiusX?: number;
+    readonly excludeRadiusZ?: number;
+    readonly edgeSoftness?: number;
+  };
+  readonly clearPath?: boolean;
+  readonly minTerrainHeight?: number;
+  readonly maxTerrainHeight?: number;
+  readonly minBladeHeight?: number;
+  readonly maxBladeHeight?: number;
+  readonly minBladeWidth?: number;
+  readonly maxBladeWidth?: number;
+  readonly dirtInfluence?: number;
 }
 
 export function createStylizedTerrainMaterial(): MeshStandardMaterial {
@@ -147,6 +201,7 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
     fog: true,
     uniforms: {
       ...DIRT_UNIFORMS,
+      dirtInfluence: { value: options.dirtInfluence ?? 1 },
       time: options.time,
       windDirection: { value: new Vector2(0.82, 0.57).normalize() },
       windStrength: { value: 0.42 },
@@ -165,6 +220,7 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
       ${GROUND_MASK_UNIFORMS}
       ${GROUND_MASK_GLSL}
       uniform float time;
+      uniform float dirtInfluence;
       uniform vec2 windDirection;
       uniform float windStrength;
       uniform float windSpeed;
@@ -177,7 +233,7 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
 
       void main() {
         vec2 baseXZ = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;
-        bladeDirt = groundDirt(baseXZ);
+        bladeDirt = groundDirt(baseXZ) * dirtInfluence;
         bladePatch = groundFbm(baseXZ * 0.025 + vec2(7.1, 3.7));
 
         vec3 localPosition = position;
@@ -240,14 +296,51 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
 
   while (instance < options.count && attempts < options.count * 12) {
     attempts += 1;
-    const x = (options.random() - 0.5) * 150;
-    const z = -8 + options.random() * 142;
+    let x: number;
+    let z: number;
+    if (options.placement) {
+      const angle = options.random() * Math.PI * 2;
+      const radius = Math.sqrt(options.random());
+      const edgeSoftness = options.placement.edgeSoftness ?? 0;
+      if (
+        edgeSoftness > 0 &&
+        radius > 1 - edgeSoftness &&
+        options.random() > (1 - radius) / edgeSoftness
+      ) {
+        continue;
+      }
+      x = options.placement.centerX + Math.cos(angle) * options.placement.radiusX * radius;
+      z = options.placement.centerZ + Math.sin(angle) * options.placement.radiusZ * radius;
+      if (
+        options.placement.excludeRadiusX !== undefined &&
+        options.placement.excludeRadiusZ !== undefined
+      ) {
+        const excludedDistance = Math.hypot(
+          (x - options.placement.centerX) / options.placement.excludeRadiusX,
+          (z - options.placement.centerZ) / options.placement.excludeRadiusZ,
+        );
+        if (excludedDistance < 1) continue;
+      }
+    } else {
+      x = (options.random() - 0.5) * 150;
+      z = -8 + options.random() * 142;
+    }
     const height = options.heightAt(x, z);
     const pathClearance = 5.5 + Math.sin(z * 0.075) * 2.2;
-    if (height < 2.1 || height > 12.8 || Math.abs(x) < pathClearance) continue;
+    if (
+      height < (options.minTerrainHeight ?? 2.1) ||
+      height > (options.maxTerrainHeight ?? 12.8) ||
+      (options.clearPath !== false && Math.abs(x) < pathClearance)
+    ) {
+      continue;
+    }
 
-    const bladeHeight = 0.62 + options.random() * 0.88;
-    const bladeWidth = 0.075 + options.random() * 0.055;
+    const minBladeHeight = options.minBladeHeight ?? 0.62;
+    const maxBladeHeight = options.maxBladeHeight ?? 1.5;
+    const minBladeWidth = options.minBladeWidth ?? 0.075;
+    const maxBladeWidth = options.maxBladeWidth ?? 0.13;
+    const bladeHeight = minBladeHeight + options.random() * (maxBladeHeight - minBladeHeight);
+    const bladeWidth = minBladeWidth + options.random() * (maxBladeWidth - minBladeWidth);
     position.set(x, height + 0.015, z);
     rotation.setFromAxisAngle(up, options.random() * Math.PI * 2);
     scale.set(bladeWidth, bladeHeight, bladeWidth);
@@ -264,31 +357,31 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
   return grass;
 }
 
-export function createStylizedWaterMaterial(time: IUniform<number>): ShaderMaterial {
+// Close imperative Three.js port of stylized-components/waterFloor. Uniform
+// ratios stay aligned with the pinned source while spatial frequency is tuned
+// for Vibes' larger meter scale.
+export function createStylizedWaterMaterial(state: StylizedWaterState): ShaderMaterial {
   return new ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    side: DoubleSide,
+    side: FrontSide,
     uniforms: {
-      time,
-      deepColor: { value: new Color('#123f5b') },
-      midColor: { value: new Color('#2ca9b4') },
-      highlightColor: { value: new Color('#bdf7de') },
-      skyColor: { value: new Color('#f3af78') },
-      fogColor: { value: new Color() },
-      fogNear: { value: 1 },
-      fogFar: { value: 1_000 },
-      fogDensity: { value: 0.00025 },
+      time: state.time,
+      cameraXZ: state.cameraXZ,
+      rippleCenters: { value: state.rippleCenters },
+      rippleTimes: { value: state.rippleTimes },
+      rippleCount: state.rippleCount,
+      deepColor: { value: new Color('#1a3a5c') },
+      midColor: { value: new Color('#59c0e8') },
+      highlightColor: { value: new Color('#ffffff') },
     },
     vertexShader: /* glsl */ `
       varying vec2 waterWorldXZ;
-      #include <fog_pars_vertex>
       void main() {
         vec4 world = modelMatrix * vec4(position, 1.0);
         waterWorldXZ = world.xz;
         vec4 mvPosition = viewMatrix * world;
         gl_Position = projectionMatrix * mvPosition;
-        #include <fog_vertex>
       }
     `,
     fragmentShader: /* glsl */ `
@@ -296,9 +389,11 @@ export function createStylizedWaterMaterial(time: IUniform<number>): ShaderMater
       uniform vec3 deepColor;
       uniform vec3 midColor;
       uniform vec3 highlightColor;
-      uniform vec3 skyColor;
+      uniform vec2 cameraXZ;
+      uniform vec2 rippleCenters[${MAX_WATER_RIPPLES_GLSL}];
+      uniform float rippleTimes[${MAX_WATER_RIPPLES_GLSL}];
+      uniform int rippleCount;
       varying vec2 waterWorldXZ;
-      #include <fog_pars_fragment>
 
       vec2 waterHash(vec2 p) {
         p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
@@ -311,7 +406,7 @@ export function createStylizedWaterMaterial(time: IUniform<number>): ShaderMater
       }
 
       vec2 cellPoint(vec2 seed) {
-        return 0.5 + 0.5 * sin(time * 0.24 + 6.2831 * seed);
+        return 0.5 + 0.5 * sin(time * 0.30 + 6.2831 * seed);
       }
 
       vec2 voronoiDistances(vec2 p) {
@@ -324,7 +419,7 @@ export function createStylizedWaterMaterial(time: IUniform<number>): ShaderMater
             vec2 neighbor = vec2(float(x), float(y));
             float distanceToPoint = length(neighbor + cellPoint(waterHash(cell + neighbor)) - local);
             nearest = min(nearest, distanceToPoint);
-            smoothNearest = smoothMinimum(smoothNearest, distanceToPoint, 0.54);
+            smoothNearest = smoothMinimum(smoothNearest, distanceToPoint, 0.55);
           }
         }
         return vec2(nearest, smoothNearest);
@@ -341,30 +436,132 @@ export function createStylizedWaterMaterial(time: IUniform<number>): ShaderMater
         );
       }
 
+      float fbm(vec2 p) {
+        float value = 0.0;
+        float amplitude = 0.5;
+        for (int octave = 0; octave < 2; octave++) {
+          value += amplitude * valueNoise(p);
+          p *= 2.0;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+
       void main() {
-        vec2 noiseUV = waterWorldXZ * 0.024 + vec2(time * 0.035, 0.0);
-        vec2 distortion = vec2(valueNoise(noiseUV) - 0.5) * 0.34;
-        vec2 cells = voronoiDistances(waterWorldXZ * 0.075 + vec2(0.0, time * 0.025) + distortion);
+        vec2 noiseUV = waterWorldXZ * 1.52 + vec2(time * 0.20, 0.0);
+        vec2 distortion = vec2(fbm(noiseUV) - 0.5) * 0.30;
+        vec2 cells = voronoiDistances(
+          waterWorldXZ * 0.48 + vec2(0.0, 0.05) * time + distortion
+        );
         float edge = cells.x - cells.y;
-        float band = smoothstep(0.052, 0.073, edge);
-        float highlight = smoothstep(0.47, 0.82, band);
-        vec3 color = mix(deepColor, midColor, smoothstep(0.03, 0.42, band));
-        color = mix(color, highlightColor, highlight);
+        float ramp = smoothstep(0.057, 0.077, edge);
 
-        float rippleDistance = length(waterWorldXZ - vec2(0.0, 111.0));
-        float rippleRadius = mod(time * 1.45, 8.0);
-        float ripple = 1.0 - smoothstep(0.0, 0.15, abs(rippleDistance - rippleRadius));
-        ripple *= 1.0 - rippleRadius / 8.0;
-        color = mix(color, highlightColor, ripple * 0.65);
+        float midPosition = 0.084;
+        float deepToMid = clamp(ramp / midPosition, 0.0, 1.0);
+        float midToHighlight = clamp((ramp - midPosition) / (1.0 - midPosition), 0.0, 1.0);
+        vec3 color = mix(
+          mix(deepColor, midColor, deepToMid),
+          mix(midColor, highlightColor, midToHighlight),
+          step(midPosition, ramp)
+        );
 
-        float horizon = smoothstep(-20.0, 150.0, waterWorldXZ.y);
-        color = mix(color, skyColor, horizon * 0.09);
-        gl_FragColor = vec4(color, mix(0.76, 0.94, max(band, ripple)));
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-        #include <fog_fragment>
+        float rippleBrightness = 0.0;
+        for (int rippleIndex = 0; rippleIndex < ${MAX_WATER_RIPPLES_GLSL}; rippleIndex++) {
+          float rippleEnabled = step(float(rippleIndex), float(rippleCount) - 0.5);
+          float elapsed = max(time - rippleTimes[rippleIndex], 0.0);
+          float distanceFromImpact = length(waterWorldXZ - rippleCenters[rippleIndex]);
+          for (int ringIndex = 0; ringIndex < 2; ringIndex++) {
+            float ringElapsed = max(elapsed - float(ringIndex), 0.0);
+            float ringRadius = ringElapsed * 1.5;
+            float ringDistance = abs(distanceFromImpact - ringRadius);
+            float ring = 1.0 - smoothstep(0.0, 0.12, ringDistance);
+            rippleBrightness += ring * exp(-ringElapsed * 1.6) * rippleEnabled;
+          }
+        }
+        rippleBrightness = clamp(rippleBrightness * 5.5, 0.0, 1.0);
+        color = mix(color, highlightColor, rippleBrightness);
+
+        float cameraDistance = length(waterWorldXZ - cameraXZ);
+        float distanceFade = 1.0 - pow(clamp(cameraDistance / 90.0, 0.0, 1.0), 1.4);
+        float alpha = mix(0.45, 1.0, max(ramp, rippleBrightness)) * distanceFade;
+        gl_FragColor = vec4(color, alpha);
       }
     `,
-    fog: true,
+  });
+}
+
+export function createStylizedSeabedMaterial(state: StylizedWaterState): ShaderMaterial {
+  return new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: FrontSide,
+    uniforms: {
+      time: state.time,
+      cameraXZ: state.cameraXZ,
+      deepColor: { value: new Color('#1aaae8') },
+      cellColor: { value: new Color('#177096') },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 seabedWorldXZ;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        seabedWorldXZ = world.xz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float time;
+      uniform vec2 cameraXZ;
+      uniform vec3 deepColor;
+      uniform vec3 cellColor;
+      varying vec2 seabedWorldXZ;
+
+      vec2 seabedHash(vec2 point) {
+        point = vec2(
+          dot(point, vec2(127.1, 311.7)),
+          dot(point, vec2(269.5, 183.3))
+        );
+        return fract(sin(point) * 43758.5453);
+      }
+
+      float seabedSmoothMinimum(float left, float right, float radius) {
+        float blend = max(radius - abs(left - right), 0.0) / radius;
+        return min(left, right) - blend * blend * blend * radius / 6.0;
+      }
+
+      vec2 seabedCellPoint(vec2 seed) {
+        return 0.5 + 0.5 * sin(time * 0.49 + 6.2831 * seed);
+      }
+
+      vec2 seabedDistances(vec2 point) {
+        vec2 cell = floor(point);
+        vec2 local = fract(point);
+        float nearest = 8.0;
+        float smoothNearest = 8.0;
+        for (int y = -1; y <= 1; y++) {
+          for (int x = -1; x <= 1; x++) {
+            vec2 neighbor = vec2(float(x), float(y));
+            float distanceToCell = length(
+              neighbor + seabedCellPoint(seabedHash(cell + neighbor)) - local
+            );
+            nearest = min(nearest, distanceToCell);
+            smoothNearest = seabedSmoothMinimum(smoothNearest, distanceToCell, 0.4);
+          }
+        }
+        return vec2(nearest, smoothNearest);
+      }
+
+      void main() {
+        vec2 cells = seabedDistances(
+          seabedWorldXZ * 0.256 + vec2(0.0, -0.11) * time
+        );
+        float edge = cells.x - cells.y;
+        float ramp = smoothstep(0.03, 0.09, edge);
+        vec3 color = mix(deepColor, cellColor, ramp);
+        float cameraDistance = length(seabedWorldXZ - cameraXZ);
+        float fade = 1.0 - pow(clamp(cameraDistance / 250.0, 0.0, 1.0), 2.0);
+        gl_FragColor = vec4(color, fade);
+      }
+    `,
   });
 }
