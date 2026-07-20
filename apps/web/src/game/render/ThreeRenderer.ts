@@ -59,6 +59,11 @@ import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
 
 import { selectAvatarAnimation, type AvatarAnimationState } from './avatarAnimation';
 import type { RobotAvatar } from './RobotAvatar';
+import {
+  createStylizedGrassField,
+  createStylizedTerrainMaterial,
+  createStylizedWaterMaterial,
+} from './StylizedEnvironment';
 
 export interface RenderMetrics {
   readonly fps: number;
@@ -447,58 +452,16 @@ export class ThreeRenderer {
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
 
-    const terrain = new Mesh(
-      geometry,
-      new MeshStandardMaterial({
-        vertexColors: true,
-        roughness: 0.93,
-        metalness: 0,
-      }),
-    );
+    const terrain = new Mesh(geometry, createStylizedTerrainMaterial());
     terrain.receiveShadow = true;
     this.#scene.add(terrain);
   }
 
   #buildWater(): void {
-    const material = new ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      side: DoubleSide,
-      uniforms: {
-        time: this.#waterTime,
-        shallow: { value: new Color('#46c1bd') },
-        deep: { value: new Color('#125366') },
-        sky: { value: COLOR.skyHorizon },
-      },
-      vertexShader: `
-        uniform float time;
-        varying float wave;
-        varying vec3 worldPosition;
-        void main() {
-          vec3 transformed = position;
-          wave = sin(position.x * 0.06 + time * 0.9) * 0.16
-            + sin(position.y * 0.045 - time * 0.7) * 0.1;
-          transformed.z += wave;
-          vec4 world = modelMatrix * vec4(transformed, 1.0);
-          worldPosition = world.xyz;
-          gl_Position = projectionMatrix * viewMatrix * world;
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 shallow;
-        uniform vec3 deep;
-        uniform vec3 sky;
-        varying float wave;
-        varying vec3 worldPosition;
-        void main() {
-          float horizon = smoothstep(-20.0, 120.0, worldPosition.z);
-          vec3 water = mix(deep, shallow, 0.38 + wave * 0.5);
-          water = mix(water, sky, horizon * 0.17);
-          gl_FragColor = vec4(water, 0.78);
-        }
-      `,
-    });
-    const water = new Mesh(new PlaneGeometry(420, 430, 36, 36), material);
+    const water = new Mesh(
+      new PlaneGeometry(420, 430, 1, 1),
+      createStylizedWaterMaterial(this.#waterTime),
+    );
     water.rotation.x = -Math.PI / 2;
     water.position.set(0, 0.12, 38);
     water.renderOrder = 3;
@@ -824,26 +787,12 @@ export class ThreeRenderer {
     rocks.receiveShadow = true;
     this.#scene.add(rocks);
 
-    const grassGeometry = new ConeGeometry(0.12, 1.15, 3);
-    const grassMaterial = new MeshStandardMaterial({
-      color: COLOR.grass,
-      roughness: 1,
-      side: DoubleSide,
+    const grass = createStylizedGrassField({
+      count: 11_000,
+      time: this.#waterTime,
+      heightAt: arrivalTerrainHeight,
+      random,
     });
-    const grass = new InstancedMesh(grassGeometry, grassMaterial, 320);
-    for (let index = 0; index < 320; index += 1) {
-      let x = (random() - 0.5) * 148;
-      const z = 4 + random() * 126;
-      if (Math.abs(x) < 8) x += x < 0 ? -10 : 10;
-      const y = arrivalTerrainHeight(x, z);
-      const size = 0.65 + random() * 1.1;
-      position.set(x, y + size * 0.5, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), random() * Math.PI * 2);
-      scale.set(size, size, size);
-      transform.compose(position, rotation, scale);
-      grass.setMatrixAt(index, transform);
-    }
-    grass.castShadow = true;
     this.#scene.add(grass);
 
     const coralGeometry = new ConeGeometry(0.22, 1.8, 5);

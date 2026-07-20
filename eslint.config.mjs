@@ -55,9 +55,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['*.config.{js,mjs,ts}', '**/*.config.{js,mjs,ts}'],
+    files: ['*.config.{cjs,js,mjs,ts}', '**/*.config.{cjs,js,mjs,ts}'],
     languageOptions: {
       globals: globals.node,
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
 );

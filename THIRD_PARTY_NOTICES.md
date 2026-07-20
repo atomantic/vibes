@@ -2,6 +2,15 @@
 
 Original Vibes code, documentation, and procedural content are licensed under the repository's [ISC License](./LICENSE). The following imported asset keeps its own license and provenance.
 
+## Stylized Components rendering techniques
+
+- **Creator:** Christian Ortiz (Cortiz)
+- **License:** [MIT](https://github.com/cortiz2894/stylized-components/blob/b182d81bff64531e584f50d71f046ae05fab3c87/LICENSE)
+- **Pinned source:** [`cortiz2894/stylized-components` commit `b182d81`](https://github.com/cortiz2894/stylized-components/tree/b182d81bff64531e584f50d71f046ae05fab3c87)
+- **Vibes modifications:** Reimplemented the water system's world-anchored animated Voronoi F1 minus SmoothF1 cel bands, distortion, and ripple styling in imperative Three.js. Reimplemented the grass system's segmented instanced blades, world-space wind, environmental color variation, and shared procedural ground/dirt mask for Vibes' deterministic terrain. React Three Fiber, Leva, demo models, textures, and source-project runtime code are not bundled.
+
+Copyright (c) 2026 Christian Ortiz (Cortiz). Used under the MIT License; the full license text is available at the pinned source above.
+
 ## RobotExpressive.glb
 
 - **Creator:** Tomás Laulhé (Quaternius)
