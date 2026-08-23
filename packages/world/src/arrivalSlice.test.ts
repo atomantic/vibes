@@ -52,10 +52,20 @@ describe('Arrival slice definition', () => {
     const rock = scatter.find(({ archetype }) => archetype === 'rock');
     const coral = scatter.find(({ archetype }) => archetype === 'coral');
     const grass = scatter.find(({ archetype }) => archetype === 'grass');
+    const launchGrass = scatter.find(
+      ({ id }) => id === ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
+    );
     expect(rock).toBeDefined();
     expect(coral).toBeDefined();
     expect(grass).toBeDefined();
-    if (rock === undefined || coral === undefined || grass === undefined) return;
+    expect(launchGrass).toBeDefined();
+    if (
+      rock === undefined ||
+      coral === undefined ||
+      grass === undefined ||
+      launchGrass === undefined
+    )
+      return;
 
     const sample = (contentId: string, seedOffset: number, count: number): number[] => {
       const random = createSeededRandomStream(ARRIVAL_SLICE_SEED, contentId, seedOffset);
@@ -86,7 +96,7 @@ describe('Arrival slice definition', () => {
     expect(sample(rock.id, rock.seedOffset, 8)).toEqual(sample(rock.id, rock.seedOffset, 8));
     expect(firstPass[rock.id]).not.toEqual(firstPass[coral.id]);
     expect(sample(grass.id, grass.seedOffset, 8)).not.toEqual(
-      sample(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch, grass.seedOffset, 8),
+      sample(launchGrass.id, launchGrass.seedOffset, 8),
     );
     expect(sample(rock.id, rock.seedOffset, 4)).toEqual([
       0.9442654587328434, 0.13359356671571732, 0.08415482798591256, 0.06057725730352104,
@@ -217,9 +227,6 @@ describe('Arrival slice definition', () => {
 
   it('rejects duplicate scatter stable IDs', () => {
     const firstScatter = ARRIVAL_SLICE_DEFINITION.content.arrivalShore.scatter[0];
-    expect(firstScatter).toBeDefined();
-    if (firstScatter === undefined) return;
-
     const scatter = ARRIVAL_SLICE_DEFINITION.content.arrivalShore.scatter;
     const invalid: ArrivalSliceDefinition = {
       ...ARRIVAL_SLICE_DEFINITION,

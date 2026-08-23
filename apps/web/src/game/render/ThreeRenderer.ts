@@ -1089,13 +1089,11 @@ export class ThreeRenderer {
       createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, contentId, seedOffset);
     const rockDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreRock);
     const grassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrass);
+    const launchGrassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch);
     const coralDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreCoral);
     const rockRandom = streamFor(rockDescriptor.id, rockDescriptor.seedOffset);
     const grassRandom = streamFor(grassDescriptor.id, grassDescriptor.seedOffset);
-    const launchGrassRandom = streamFor(
-      ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
-      grassDescriptor.seedOffset,
-    );
+    const launchGrassRandom = streamFor(launchGrassDescriptor.id, launchGrassDescriptor.seedOffset);
     const coralRandom = streamFor(coralDescriptor.id, coralDescriptor.seedOffset);
     const rockGeometry = new IcosahedronGeometry(1, 1);
     const rockMaterial = new MeshStandardMaterial({ color: COLOR.rock, roughness: 0.96 });
