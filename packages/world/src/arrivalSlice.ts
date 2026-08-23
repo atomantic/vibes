@@ -47,6 +47,7 @@ export const ARRIVAL_SLICE_IDS = {
   contentArrivalShoreCoral: 'content.arrival-shore.scatter.coral',
   contentArrivalShoreReed: 'content.arrival-shore.scatter.reed',
   contentArrivalShoreGrass: 'content.arrival-shore.scatter.grass',
+  contentArrivalShoreGrassLaunch: 'content.arrival-shore.scatter.grass.launch',
   contentArrivalChime: 'content.arrival-chime',
   contentCrossing: 'content.arrival-crossing',
   contentLoom: 'content.loom',
@@ -577,7 +578,7 @@ export function createSeededRandomStream(
 ): SeededRandomStream {
   let value = hashScatterSeed(worldSeed, contentId, seedOffset);
   return () => {
-    value += SEEDED_RANDOM_INCREMENT;
+    value = (value + SEEDED_RANDOM_INCREMENT) >>> 0;
     let result = value;
     result = Math.imul(result ^ (result >>> 15), result | 1);
     result ^= result + Math.imul(result ^ (result >>> 7), result | 61);

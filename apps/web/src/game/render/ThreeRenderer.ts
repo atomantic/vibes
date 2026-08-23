@@ -50,6 +50,7 @@ import {
 import {
   ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE_DEFINITION,
+  ARRIVAL_SLICE_IDS,
   ARRIVAL_POND,
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
@@ -1077,24 +1078,25 @@ export class ThreeRenderer {
 
   #buildScatter(): void {
     const scatterDescriptors = ARRIVAL_SLICE_DEFINITION.content.arrivalShore.scatter;
-    const descriptorFor = (archetype: ScatterDescriptor['archetype']): ScatterDescriptor => {
-      const descriptor = scatterDescriptors.find((candidate) => candidate.archetype === archetype);
+    const descriptorFor = (id: ScatterDescriptor['id']): ScatterDescriptor => {
+      const descriptor = scatterDescriptors.find((candidate) => candidate.id === id);
       if (descriptor === undefined) {
-        throw new Error(`Missing Arrival Shore scatter descriptor for '${archetype}'.`);
+        throw new Error(`Missing Arrival Shore scatter descriptor for '${id}'.`);
       }
       return descriptor;
     };
-    const streamFor = (descriptor: ScatterDescriptor, variant?: string): (() => number) =>
-      createSeededRandomStream(
-        ARRIVAL_SLICE_DEFINITION.seed,
-        variant === undefined ? descriptor.id : `${descriptor.id}.${variant}`,
-        descriptor.seedOffset,
-      );
-    const rockRandom = streamFor(descriptorFor('rock'));
-    const grassDescriptor = descriptorFor('grass');
-    const grassRandom = streamFor(grassDescriptor);
-    const launchGrassRandom = streamFor(grassDescriptor, 'launch');
-    const coralRandom = streamFor(descriptorFor('coral'));
+    const streamFor = (contentId: ScatterDescriptor['id'], seedOffset: number): (() => number) =>
+      createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, contentId, seedOffset);
+    const rockDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreRock);
+    const grassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrass);
+    const coralDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreCoral);
+    const rockRandom = streamFor(rockDescriptor.id, rockDescriptor.seedOffset);
+    const grassRandom = streamFor(grassDescriptor.id, grassDescriptor.seedOffset);
+    const launchGrassRandom = streamFor(
+      ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
+      grassDescriptor.seedOffset,
+    );
+    const coralRandom = streamFor(coralDescriptor.id, coralDescriptor.seedOffset);
     const rockGeometry = new IcosahedronGeometry(1, 1);
     const rockMaterial = new MeshStandardMaterial({ color: COLOR.rock, roughness: 0.96 });
     const rocks = new InstancedMesh(rockGeometry, rockMaterial, 96);

@@ -152,6 +152,10 @@ export function validateArrivalSliceDefinition(
   definition.content.arrivalShore.scatter.forEach((scatter, index) => {
     registerId(scatter.id, `content.arrivalShore.scatter[${index.toString()}].id`);
   });
+  registerId(
+    ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
+    'content.arrivalShore.scatterVariants.grassLaunch.id',
+  );
 
   definition.content.distantSilhouettes.forEach((silhouette, index) => {
     const path = `content.distantSilhouettes[${index.toString()}]`;
