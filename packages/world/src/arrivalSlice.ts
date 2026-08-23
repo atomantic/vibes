@@ -1,6 +1,7 @@
 import type {
   ArrivalSliceDefinition,
   ArrivalSliceStateKey,
+  SeededRandomStream,
   StableWorldId,
   Vec3,
   WorldAnchorDescriptor,
@@ -42,6 +43,10 @@ export const ARRIVAL_SLICE_IDS = {
   routeCrossing: 'route.arrival.crossing',
   routeLoom: 'route.arrival.loom',
   contentArrivalShore: 'content.arrival-shore',
+  contentArrivalShoreRock: 'content.arrival-shore.scatter.rock',
+  contentArrivalShoreCoral: 'content.arrival-shore.scatter.coral',
+  contentArrivalShoreReed: 'content.arrival-shore.scatter.reed',
+  contentArrivalShoreGrass: 'content.arrival-shore.scatter.grass',
   contentArrivalChime: 'content.arrival-chime',
   contentCrossing: 'content.arrival-crossing',
   contentLoom: 'content.loom',
@@ -203,6 +208,7 @@ export const ARRIVAL_SLICE_CONTENT = {
     palette: PALETTE.shore,
     scatter: [
       {
+        id: ARRIVAL_SLICE_IDS.contentArrivalShoreRock,
         archetype: 'rock',
         count: 56,
         seedOffset: 101,
@@ -211,6 +217,7 @@ export const ARRIVAL_SLICE_CONTENT = {
         maximumScale: 3.4,
       },
       {
+        id: ARRIVAL_SLICE_IDS.contentArrivalShoreCoral,
         archetype: 'coral',
         count: 84,
         seedOffset: 211,
@@ -219,6 +226,7 @@ export const ARRIVAL_SLICE_CONTENT = {
         maximumScale: 1.8,
       },
       {
+        id: ARRIVAL_SLICE_IDS.contentArrivalShoreReed,
         archetype: 'reed',
         count: 260,
         seedOffset: 307,
@@ -227,6 +235,7 @@ export const ARRIVAL_SLICE_CONTENT = {
         maximumScale: 1.45,
       },
       {
+        id: ARRIVAL_SLICE_IDS.contentArrivalShoreGrass,
         archetype: 'grass',
         count: 420,
         seedOffset: 401,
@@ -541,6 +550,40 @@ export const ARRIVAL_SLICE_DEFINITION = {
 } as const satisfies ArrivalSliceDefinition;
 
 export const ARRIVAL_SLICE = ARRIVAL_SLICE_DEFINITION;
+
+const SEEDED_RANDOM_HASH_OFFSET = 0x811c_9dc5;
+const SEEDED_RANDOM_HASH_PRIME = 0x0100_0193;
+const SEEDED_RANDOM_INCREMENT = 0x6d2b_79f5;
+
+function hashScatterSeed(worldSeed: number, contentId: StableWorldId, seedOffset: number): number {
+  let hash = (SEEDED_RANDOM_HASH_OFFSET ^ (worldSeed >>> 0)) >>> 0;
+  for (let index = 0; index < contentId.length; index += 1) {
+    hash ^= contentId.charCodeAt(index);
+    hash = Math.imul(hash, SEEDED_RANDOM_HASH_PRIME) >>> 0;
+  }
+  hash ^= seedOffset >>> 0;
+  return Math.imul(hash, SEEDED_RANDOM_HASH_PRIME) >>> 0;
+}
+
+/**
+ * Creates a deterministic stream for one authored content descriptor.
+ * Hashing the stable ID before starting the PRNG keeps each stream independent
+ * when another descriptor's count or generation order changes.
+ */
+export function createSeededRandomStream(
+  worldSeed: number,
+  contentId: StableWorldId,
+  seedOffset: number,
+): SeededRandomStream {
+  let value = hashScatterSeed(worldSeed, contentId, seedOffset);
+  return () => {
+    value += SEEDED_RANDOM_INCREMENT;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
 
 export function getArrivalSliceAnchor(id: StableWorldId): WorldAnchorDescriptor | undefined {
   return ARRIVAL_SLICE_DEFINITION.anchors.find((anchor) => anchor.id === id);

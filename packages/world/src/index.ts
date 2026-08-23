@@ -8,6 +8,7 @@ export {
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_SLICE_SCHEMA_VERSION,
   ARRIVAL_SLICE_SEED,
+  createSeededRandomStream,
   getArrivalSliceAnchor,
 } from './arrivalSlice.js';
 export type { ArrivalSliceId, EchoShardDescriptor, EchoShardKey } from './arrivalSlice.js';
@@ -45,6 +46,7 @@ export type {
   PaletteDescriptor,
   RouteStepDescriptor,
   ScatterDescriptor,
+  SeededRandomStream,
   SpatialRole,
   StableWorldId,
   TraversalLesson,

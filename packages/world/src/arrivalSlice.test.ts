@@ -6,6 +6,7 @@ import {
   ARRIVAL_SLICE_IDS,
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_SLICE_SEED,
+  ARRIVAL_SLICE_CONTENT,
   ARRIVAL_POND,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
@@ -14,6 +15,7 @@ import {
   ArrivalSliceDefinitionValidationError,
   arrivalTerrainHeight,
   assertValidArrivalSliceDefinition,
+  createSeededRandomStream,
   getArrivalSliceAnchor,
   validateArrivalSliceDefinition,
 } from './index.js';
@@ -40,6 +42,44 @@ describe('Arrival slice definition', () => {
     const first = JSON.stringify(ARRIVAL_SLICE_DEFINITION);
     const second = JSON.stringify(ARRIVAL_SLICE_DEFINITION);
     expect(second).toBe(first);
+  });
+
+  it('gives each scatter descriptor a stable deterministic stream', () => {
+    const scatter = ARRIVAL_SLICE_CONTENT.arrivalShore.scatter;
+    const rock = scatter.find(({ archetype }) => archetype === 'rock');
+    const coral = scatter.find(({ archetype }) => archetype === 'coral');
+    expect(rock).toBeDefined();
+    expect(coral).toBeDefined();
+    if (rock === undefined || coral === undefined) return;
+
+    const sample = (contentId: string, seedOffset: number, count: number): number[] => {
+      const random = createSeededRandomStream(ARRIVAL_SLICE_SEED, contentId, seedOffset);
+      return Array.from({ length: count }, () => random());
+    };
+    const generate = (order: readonly (typeof scatter)[number][], rockCount: number) => {
+      const values = new Map<string, number[]>();
+      for (const descriptor of order) {
+        values.set(
+          descriptor.id,
+          sample(
+            descriptor.id,
+            descriptor.seedOffset,
+            descriptor.archetype === 'rock' ? rockCount : 6,
+          ),
+        );
+      }
+      return Object.fromEntries(
+        [...values.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      );
+    };
+
+    const firstPass = generate([rock, coral], 6);
+    const reorderedPass = generate([coral, rock], 6);
+    const changedRockCountPass = generate([rock, coral], 48);
+    expect(reorderedPass).toEqual(firstPass);
+    expect(changedRockCountPass[coral.id]).toEqual(firstPass[coral.id]);
+    expect(sample(rock.id, rock.seedOffset, 8)).toEqual(sample(rock.id, rock.seedOffset, 8));
+    expect(firstPass[rock.id]).not.toEqual(firstPass[coral.id]);
   });
 
   it('defines one deterministic terrain grid for rendering and collision', () => {
