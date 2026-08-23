@@ -662,6 +662,7 @@ kbd {
 .text-button.compact {
   width: auto;
   margin-top: 4px;
+  min-height: 44px;
   padding: 8px 10px;
 }
 

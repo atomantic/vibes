@@ -24,4 +24,3 @@ export const ECHO_SHARD_RADIUS_METERS = 2.6;
 
 export const COYOTE_TICKS = 3;
 export const JUMP_BUFFER_TICKS = 4;
-export const WORLD_CELL_SIZE_METERS = 64;

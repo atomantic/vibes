@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { InputButton } from '@vibes/protocol';
+import { InputButton, WORLD_CELL_SIZE } from '@vibes/protocol';
 import type { EchoShardKey, InputFrame, InteractionRequest } from '@vibes/protocol';
 import { ARRIVAL_ECHO_SHARDS, ARRIVAL_SLICE_POSITIONS, ARRIVAL_SLICE_SEED } from '@vibes/world';
 
@@ -36,9 +36,9 @@ function playerPosition(simulation: GameSimulation): {
   const position = simulation.snapshot().entities[0]?.position;
   if (position === undefined) throw new Error('Player snapshot is missing.');
   return {
-    x: position.cellX * 64 + position.localX,
+    x: position.cellX * WORLD_CELL_SIZE + position.localX,
     y: position.y,
-    z: position.cellZ * 64 + position.localZ,
+    z: position.cellZ * WORLD_CELL_SIZE + position.localZ,
   };
 }
 

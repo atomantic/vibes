@@ -13,7 +13,17 @@ export default defineConfig({
     testTimeout: 10_000,
     coverage: {
       provider: 'v8',
-      include: ['packages/*/src/**/*.{ts,tsx}'],
+      // Deterministic web modules are unit-tested here; React/WebGL composition
+      // is exercised by the production Playwright suite.
+      include: [
+        'packages/*/src/**/*.{ts,tsx}',
+        'apps/web/src/settings.ts',
+        'apps/web/src/game/audio/SynthAudio.ts',
+        'apps/web/src/game/input/KeyboardInput.ts',
+        'apps/web/src/game/persistence.ts',
+        'apps/web/src/game/render/avatarAnimation.ts',
+        'apps/web/src/game/render/shardVisibility.ts',
+      ],
       exclude: ['**/*.test.{ts,tsx}', '**/*.d.ts', '**/src/index.ts', '**/src/types.ts'],
       reporter: ['text', 'json-summary', 'lcov'],
       reportOnFailure: true,
