@@ -50,15 +50,18 @@ import {
 import {
   ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE_DEFINITION,
+  ARRIVAL_SLICE_IDS,
   ARRIVAL_POND,
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
   ARRIVAL_TERRAIN_RESOLUTION,
   arrivalTerrainHeight,
+  createSeededRandomStream,
   type CrossingSegmentDescriptor,
   type DistantSilhouetteDescriptor,
   type EchoShardKey,
+  type ScatterDescriptor,
   type Vec3,
 } from '@vibes/world';
 import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
@@ -1074,7 +1077,24 @@ export class ThreeRenderer {
   }
 
   #buildScatter(): void {
-    const random = seededRandom(ARRIVAL_SLICE_DEFINITION.seed ^ 0x5ca7_7e2);
+    const scatterDescriptors = ARRIVAL_SLICE_DEFINITION.content.arrivalShore.scatter;
+    const descriptorFor = (id: ScatterDescriptor['id']): ScatterDescriptor => {
+      const descriptor = scatterDescriptors.find((candidate) => candidate.id === id);
+      if (descriptor === undefined) {
+        throw new Error(`Missing Arrival Shore scatter descriptor for '${id}'.`);
+      }
+      return descriptor;
+    };
+    const streamFor = (contentId: ScatterDescriptor['id'], seedOffset: number): (() => number) =>
+      createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, contentId, seedOffset);
+    const rockDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreRock);
+    const grassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrass);
+    const launchGrassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch);
+    const coralDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreCoral);
+    const rockRandom = streamFor(rockDescriptor.id, rockDescriptor.seedOffset);
+    const grassRandom = streamFor(grassDescriptor.id, grassDescriptor.seedOffset);
+    const launchGrassRandom = streamFor(launchGrassDescriptor.id, launchGrassDescriptor.seedOffset);
+    const coralRandom = streamFor(coralDescriptor.id, coralDescriptor.seedOffset);
     const rockGeometry = new IcosahedronGeometry(1, 1);
     const rockMaterial = new MeshStandardMaterial({ color: COLOR.rock, roughness: 0.96 });
     const rocks = new InstancedMesh(rockGeometry, rockMaterial, 96);
@@ -1083,14 +1103,14 @@ export class ThreeRenderer {
     const scale = new Vector3();
     const position = new Vector3();
     for (let index = 0; index < 96; index += 1) {
-      let x = (random() - 0.5) * 154;
-      const z = -15 + random() * 150;
+      let x = (rockRandom() - 0.5) * 154;
+      const z = -15 + rockRandom() * 150;
       if (Math.abs(x) < 13) x += x < 0 ? -15 : 15;
       const y = arrivalTerrainHeight(x, z);
       position.set(x, y + 0.4, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), random() * Math.PI * 2);
-      const size = 0.55 + random() * 2.1;
-      scale.set(size * (0.7 + random() * 0.7), size, size * (0.75 + random() * 0.5));
+      rotation.setFromAxisAngle(new Vector3(0, 1, 0), rockRandom() * Math.PI * 2);
+      const size = 0.55 + rockRandom() * 2.1;
+      scale.set(size * (0.7 + rockRandom() * 0.7), size, size * (0.75 + rockRandom() * 0.5));
       transform.compose(position, rotation, scale);
       rocks.setMatrixAt(index, transform);
     }
@@ -1103,7 +1123,7 @@ export class ThreeRenderer {
       count: 11_000,
       time: this.#waterTime,
       heightAt: arrivalTerrainHeight,
-      random,
+      random: grassRandom,
     });
     this.#scene.add(grass);
 
@@ -1111,7 +1131,7 @@ export class ThreeRenderer {
       count: 53_000,
       time: this.#waterTime,
       heightAt: arrivalTerrainHeight,
-      random,
+      random: launchGrassRandom,
       placement: {
         centerX: ARRIVAL_POND.centerX,
         centerZ: ARRIVAL_POND.centerZ,
@@ -1141,13 +1161,13 @@ export class ThreeRenderer {
     });
     const coral = new InstancedMesh(coralGeometry, coralMaterial, 72);
     for (let index = 0; index < 72; index += 1) {
-      let x = (random() - 0.5) * 88;
-      const z = 89 + random() * 43;
+      let x = (coralRandom() - 0.5) * 88;
+      const z = 89 + coralRandom() * 43;
       if (Math.abs(x) < 6) x += x < 0 ? -8 : 8;
       const y = arrivalTerrainHeight(x, z);
-      const size = 0.55 + random() * 1.3;
+      const size = 0.55 + coralRandom() * 1.3;
       position.set(x, y + size * 0.75, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), random() * Math.PI * 2);
+      rotation.setFromAxisAngle(new Vector3(0, 1, 0), coralRandom() * Math.PI * 2);
       scale.set(size * 0.7, size, size * 0.7);
       transform.compose(position, rotation, scale);
       coral.setMatrixAt(index, transform);

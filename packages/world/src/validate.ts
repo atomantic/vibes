@@ -149,6 +149,10 @@ export function validateArrivalSliceDefinition(
     }
   });
 
+  definition.content.arrivalShore.scatter.forEach((scatter, index) => {
+    registerId(scatter.id, `content.arrivalShore.scatter[${index.toString()}].id`);
+  });
+
   definition.content.distantSilhouettes.forEach((silhouette, index) => {
     const path = `content.distantSilhouettes[${index.toString()}]`;
     for (const visibleFromId of silhouette.visibleFromAnchorIds) {

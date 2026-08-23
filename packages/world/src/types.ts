@@ -16,6 +16,8 @@ export interface Bounds3 {
 
 export type StableWorldId = string;
 
+export type SeededRandomStream = () => number;
+
 export type WorldAnchorKind =
   'spawn' | 'landmark' | 'interaction' | 'mechanism' | 'checkpoint' | 'silhouette';
 
@@ -61,6 +63,7 @@ export interface PaletteDescriptor {
 }
 
 export interface ScatterDescriptor {
+  readonly id: StableWorldId;
   readonly archetype: 'rock' | 'coral' | 'reed' | 'grass';
   readonly count: number;
   readonly seedOffset: number;
