@@ -1,9 +1,17 @@
-import { ARRIVAL_SLICE_DEFINITION, ARRIVAL_SLICE_IDS } from './arrivalSlice.js';
+import {
+  ARRIVAL_SLICE_DEFINITION,
+  ARRIVAL_SLICE_IDS,
+  ARRIVAL_VISUAL_GENERATORS,
+} from './arrivalSlice.js';
 import type {
   ArrivalSliceDefinition,
   Bounds3,
   StableWorldId,
+  ScatterArchetypeDescriptor,
+  SilhouetteArchetypeDescriptor,
   Vec3,
+  VisualArchetypeRegistry,
+  VisualGeneratorDescriptor,
   WorldDefinitionValidationIssue,
 } from './types.js';
 
@@ -50,6 +58,118 @@ export function validateArrivalSliceDefinition(
     }
     knownIds.add(id);
   };
+
+  const validateGeneratorGroup = (
+    group: Readonly<Record<string, VisualGeneratorDescriptor>>,
+    expectedKind: VisualGeneratorDescriptor['kind'],
+    knownGeneratorIds: ReadonlySet<string>,
+    path: string,
+  ): void => {
+    for (const [generatorId, descriptor] of Object.entries(group)) {
+      const generatorPath = `${path}.${generatorId}`;
+      registerId(descriptor.id, `${generatorPath}.id`);
+      if (!knownGeneratorIds.has(generatorId)) {
+        issue('invalid-generator', generatorPath, `Unknown visual generator '${generatorId}'.`);
+      }
+      if (descriptor.kind !== expectedKind) {
+        issue(
+          'invalid-generator',
+          `${generatorPath}.kind`,
+          `Visual generator '${generatorId}' must be registered as ${expectedKind} content.`,
+        );
+      }
+    }
+
+    for (const generatorId of knownGeneratorIds) {
+      if (group[generatorId] === undefined) {
+        issue(
+          'invalid-generator',
+          path,
+          `Visual generator '${generatorId}' is missing from the registry.`,
+        );
+      }
+    }
+  };
+
+  const validateArchetypeGroup = (
+    group: Readonly<
+      Record<
+        string,
+        { readonly id: StableWorldId; readonly kind: string; readonly generator: string }
+      >
+    >,
+    expectedKind: 'scatter' | 'silhouette',
+    generatorGroup: Readonly<Record<string, VisualGeneratorDescriptor>>,
+    path: string,
+  ): void => {
+    for (const [archetypeId, descriptor] of Object.entries(group)) {
+      const archetypePath = `${path}.${archetypeId}`;
+      registerId(descriptor.id, `${archetypePath}.id`);
+      if (descriptor.kind !== expectedKind) {
+        issue(
+          'invalid-generator',
+          `${archetypePath}.kind`,
+          `Visual archetype '${archetypeId}' must be registered as ${expectedKind} content.`,
+        );
+      }
+      const generator = generatorGroup[descriptor.generator];
+      if (generator === undefined) {
+        issue(
+          'invalid-generator',
+          `${archetypePath}.generator`,
+          `Visual archetype '${archetypeId}' references unknown generator '${descriptor.generator}'.`,
+        );
+      } else if (generator.kind !== expectedKind) {
+        issue(
+          'invalid-generator',
+          `${archetypePath}.generator`,
+          `Visual archetype '${archetypeId}' references a ${generator.kind} generator.`,
+        );
+      }
+    }
+  };
+
+  const knownContentGeneratorIds = new Set(Object.keys(ARRIVAL_VISUAL_GENERATORS.content));
+  const knownScatterGeneratorIds = new Set(Object.keys(ARRIVAL_VISUAL_GENERATORS.scatter));
+  const knownSilhouetteGeneratorIds = new Set(Object.keys(ARRIVAL_VISUAL_GENERATORS.silhouette));
+  validateGeneratorGroup(
+    definition.visualGenerators.content,
+    'content',
+    knownContentGeneratorIds,
+    'visualGenerators.content',
+  );
+  validateGeneratorGroup(
+    definition.visualGenerators.scatter,
+    'scatter',
+    knownScatterGeneratorIds,
+    'visualGenerators.scatter',
+  );
+  validateGeneratorGroup(
+    definition.visualGenerators.silhouette,
+    'silhouette',
+    knownSilhouetteGeneratorIds,
+    'visualGenerators.silhouette',
+  );
+
+  const visualArchetypes: VisualArchetypeRegistry = definition.visualArchetypes;
+  const contentGenerators: Readonly<Record<string, VisualGeneratorDescriptor>> =
+    definition.visualGenerators.content;
+  const scatterArchetypes: Readonly<Record<string, ScatterArchetypeDescriptor>> =
+    visualArchetypes.scatter;
+  const silhouetteArchetypes: Readonly<Record<string, SilhouetteArchetypeDescriptor>> =
+    visualArchetypes.silhouette;
+  validateArchetypeGroup(
+    visualArchetypes.scatter,
+    'scatter',
+    definition.visualGenerators.scatter,
+    'visualArchetypes.scatter',
+  );
+  validateArchetypeGroup(
+    visualArchetypes.silhouette,
+    'silhouette',
+    definition.visualGenerators.silhouette,
+    'visualArchetypes.silhouette',
+  );
 
   if (definition.schemaVersion !== 1) {
     issue('invalid-schema', 'schemaVersion', 'Arrival slice schema must be 1.');
@@ -130,6 +250,20 @@ export function validateArrivalSliceDefinition(
   contentDescriptors.forEach((descriptor, index) => {
     const path = `content[${index.toString()}]`;
     registerId(descriptor.id, `${path}.id`);
+    const generator = contentGenerators[descriptor.generator];
+    if (generator === undefined) {
+      issue(
+        'invalid-generator',
+        `${path}.generator`,
+        `Content descriptor '${descriptor.id}' references unknown generator '${descriptor.generator}'.`,
+      );
+    } else if (generator.kind !== 'content') {
+      issue(
+        'invalid-generator',
+        `${path}.generator`,
+        `Content descriptor '${descriptor.id}' references a ${generator.kind} generator.`,
+      );
+    }
     if (!anchorIds.has(descriptor.anchorId)) {
       issue(
         'missing-reference',
@@ -150,7 +284,28 @@ export function validateArrivalSliceDefinition(
   });
 
   definition.content.arrivalShore.scatter.forEach((scatter, index) => {
-    registerId(scatter.id, `content.arrivalShore.scatter[${index.toString()}].id`);
+    const path = `content.arrivalShore.scatter[${index.toString()}]`;
+    registerId(scatter.id, `${path}.id`);
+    const archetype = scatterArchetypes[scatter.archetype];
+    if (archetype === undefined) {
+      issue(
+        'invalid-generator',
+        `${path}.archetype`,
+        `Scatter descriptor references unknown archetype '${scatter.archetype}'.`,
+      );
+    }
+  });
+
+  definition.content.distantSilhouettes.forEach((silhouette, index) => {
+    const path = `content.distantSilhouettes[${index.toString()}]`;
+    const archetype = silhouetteArchetypes[silhouette.archetype];
+    if (archetype === undefined) {
+      issue(
+        'invalid-generator',
+        `${path}.archetype`,
+        `Silhouette descriptor references unknown archetype '${silhouette.archetype}'.`,
+      );
+    }
   });
 
   definition.content.distantSilhouettes.forEach((silhouette, index) => {

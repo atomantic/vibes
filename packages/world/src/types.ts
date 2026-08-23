@@ -62,9 +62,64 @@ export interface PaletteDescriptor {
   readonly shadow: `#${string}`;
 }
 
+export type ArrivalContentGeneratorId =
+  | 'arrival-shore-heightfield'
+  | 'arrival-chime-assembly'
+  | 'rising-stone-crossing'
+  | 'loom-ring-assembly'
+  | 'distant-silhouette';
+
+export type ScatterArchetype = 'rock' | 'coral' | 'reed' | 'grass';
+
+export type ScatterGeneratorId =
+  'scatter-rock' | 'scatter-coral' | 'scatter-reed' | 'scatter-grass';
+
+export type SilhouetteGeneratorId =
+  | 'silhouette-forest-basin'
+  | 'silhouette-wind-canyon'
+  | 'silhouette-sky-ruin'
+  | 'silhouette-beacon-spire';
+
+export type VisualGeneratorId =
+  ArrivalContentGeneratorId | ScatterGeneratorId | SilhouetteGeneratorId;
+
+export type VisualGeneratorKind = 'content' | 'scatter' | 'silhouette';
+
+export interface VisualGeneratorDescriptor<K extends VisualGeneratorKind = VisualGeneratorKind> {
+  readonly id: StableWorldId;
+  readonly kind: K;
+}
+
+export interface VisualGeneratorRegistry {
+  readonly content: Readonly<
+    Record<ArrivalContentGeneratorId, VisualGeneratorDescriptor<'content'>>
+  >;
+  readonly scatter: Readonly<Record<ScatterGeneratorId, VisualGeneratorDescriptor<'scatter'>>>;
+  readonly silhouette: Readonly<
+    Record<SilhouetteGeneratorId, VisualGeneratorDescriptor<'silhouette'>>
+  >;
+}
+
+export interface ScatterArchetypeDescriptor {
+  readonly id: StableWorldId;
+  readonly kind: 'scatter';
+  readonly generator: ScatterGeneratorId;
+}
+
+export interface SilhouetteArchetypeDescriptor {
+  readonly id: StableWorldId;
+  readonly kind: 'silhouette';
+  readonly generator: SilhouetteGeneratorId;
+}
+
+export interface VisualArchetypeRegistry {
+  readonly scatter: Readonly<Record<ScatterArchetype, ScatterArchetypeDescriptor>>;
+  readonly silhouette: Readonly<Record<DistantSilhouetteArchetype, SilhouetteArchetypeDescriptor>>;
+}
+
 export interface ScatterDescriptor {
   readonly id: StableWorldId;
-  readonly archetype: 'rock' | 'coral' | 'reed' | 'grass';
+  readonly archetype: ScatterArchetype;
   readonly count: number;
   readonly seedOffset: number;
   readonly radiusMeters: number;
@@ -176,6 +231,8 @@ export interface ArrivalSliceDefinition {
   };
   readonly playableBounds: Bounds3;
   readonly anchors: readonly WorldAnchorDescriptor[];
+  readonly visualGenerators: VisualGeneratorRegistry;
+  readonly visualArchetypes: VisualArchetypeRegistry;
   readonly route: readonly RouteStepDescriptor[];
   readonly content: ArrivalSliceContent;
   readonly interactions: readonly InteractionDescriptor[];
@@ -192,6 +249,7 @@ export type WorldDefinitionValidationCode =
   | 'invalid-position'
   | 'outside-playable-bounds'
   | 'missing-reference'
+  | 'invalid-generator'
   | 'invalid-interaction'
   | 'invalid-content'
   | 'invalid-route';

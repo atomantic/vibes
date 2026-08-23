@@ -4,6 +4,8 @@ import type {
   SeededRandomStream,
   StableWorldId,
   Vec3,
+  VisualArchetypeRegistry,
+  VisualGeneratorRegistry,
   WorldAnchorDescriptor,
 } from './types.js';
 import {
@@ -55,6 +57,27 @@ export const ARRIVAL_SLICE_IDS = {
   contentWhistlingSilhouette: 'content.silhouette.whistling-cut',
   contentStormglassSilhouette: 'content.silhouette.stormglass-aerie',
   contentBeaconSilhouette: 'content.silhouette.beacon-overlook',
+  visualGeneratorArrivalShore: 'visual.generator.arrival-shore-heightfield',
+  visualGeneratorArrivalChime: 'visual.generator.arrival-chime-assembly',
+  visualGeneratorCrossing: 'visual.generator.rising-stone-crossing',
+  visualGeneratorLoom: 'visual.generator.loom-ring-assembly',
+  visualGeneratorSilhouette: 'visual.generator.distant-silhouette',
+  visualGeneratorScatterRock: 'visual.generator.scatter-rock',
+  visualGeneratorScatterCoral: 'visual.generator.scatter-coral',
+  visualGeneratorScatterReed: 'visual.generator.scatter-reed',
+  visualGeneratorScatterGrass: 'visual.generator.scatter-grass',
+  visualGeneratorSilhouetteForestBasin: 'visual.generator.silhouette-forest-basin',
+  visualGeneratorSilhouetteWindCanyon: 'visual.generator.silhouette-wind-canyon',
+  visualGeneratorSilhouetteSkyRuin: 'visual.generator.silhouette-sky-ruin',
+  visualGeneratorSilhouetteBeaconSpire: 'visual.generator.silhouette-beacon-spire',
+  visualArchetypeScatterRock: 'visual.archetype.scatter.rock',
+  visualArchetypeScatterCoral: 'visual.archetype.scatter.coral',
+  visualArchetypeScatterReed: 'visual.archetype.scatter.reed',
+  visualArchetypeScatterGrass: 'visual.archetype.scatter.grass',
+  visualArchetypeSilhouetteForestBasin: 'visual.archetype.silhouette.forest-basin',
+  visualArchetypeSilhouetteWindCanyon: 'visual.archetype.silhouette.wind-canyon',
+  visualArchetypeSilhouetteSkyRuin: 'visual.archetype.silhouette.sky-ruin',
+  visualArchetypeSilhouetteBeaconSpire: 'visual.archetype.silhouette.beacon-spire',
 } as const;
 
 export type ArrivalSliceId = (typeof ARRIVAL_SLICE_IDS)[keyof typeof ARRIVAL_SLICE_IDS];
@@ -115,6 +138,114 @@ export const ARRIVAL_SLICE_POSITIONS = {
   stormglassSilhouette: { x: 0, y: 105, z: -175 },
   beaconSilhouette: { x: -95, y: 82, z: -235 },
 } as const satisfies Readonly<Record<string, Vec3>>;
+
+export const ARRIVAL_VISUAL_GENERATORS = {
+  content: {
+    'arrival-shore-heightfield': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorArrivalShore,
+      kind: 'content',
+    },
+    'arrival-chime-assembly': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorArrivalChime,
+      kind: 'content',
+    },
+    'rising-stone-crossing': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorCrossing,
+      kind: 'content',
+    },
+    'loom-ring-assembly': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorLoom,
+      kind: 'content',
+    },
+    'distant-silhouette': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorSilhouette,
+      kind: 'content',
+    },
+  },
+  scatter: {
+    'scatter-rock': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorScatterRock,
+      kind: 'scatter',
+    },
+    'scatter-coral': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorScatterCoral,
+      kind: 'scatter',
+    },
+    'scatter-reed': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorScatterReed,
+      kind: 'scatter',
+    },
+    'scatter-grass': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorScatterGrass,
+      kind: 'scatter',
+    },
+  },
+  silhouette: {
+    'silhouette-forest-basin': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorSilhouetteForestBasin,
+      kind: 'silhouette',
+    },
+    'silhouette-wind-canyon': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorSilhouetteWindCanyon,
+      kind: 'silhouette',
+    },
+    'silhouette-sky-ruin': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorSilhouetteSkyRuin,
+      kind: 'silhouette',
+    },
+    'silhouette-beacon-spire': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorSilhouetteBeaconSpire,
+      kind: 'silhouette',
+    },
+  },
+} as const satisfies VisualGeneratorRegistry;
+
+export const ARRIVAL_VISUAL_ARCHETYPES = {
+  scatter: {
+    rock: {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeScatterRock,
+      kind: 'scatter',
+      generator: 'scatter-rock',
+    },
+    coral: {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeScatterCoral,
+      kind: 'scatter',
+      generator: 'scatter-coral',
+    },
+    reed: {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeScatterReed,
+      kind: 'scatter',
+      generator: 'scatter-reed',
+    },
+    grass: {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeScatterGrass,
+      kind: 'scatter',
+      generator: 'scatter-grass',
+    },
+  },
+  silhouette: {
+    'forest-basin': {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeSilhouetteForestBasin,
+      kind: 'silhouette',
+      generator: 'silhouette-forest-basin',
+    },
+    'wind-canyon': {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeSilhouetteWindCanyon,
+      kind: 'silhouette',
+      generator: 'silhouette-wind-canyon',
+    },
+    'sky-ruin': {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeSilhouetteSkyRuin,
+      kind: 'silhouette',
+      generator: 'silhouette-sky-ruin',
+    },
+    'beacon-spire': {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeSilhouetteBeaconSpire,
+      kind: 'silhouette',
+      generator: 'silhouette-beacon-spire',
+    },
+  },
+} as const satisfies VisualArchetypeRegistry;
 
 const PALETTE = {
   shore: {
@@ -489,6 +620,8 @@ export const ARRIVAL_SLICE_DEFINITION = {
     },
   },
   anchors: ANCHORS,
+  visualGenerators: ARRIVAL_VISUAL_GENERATORS,
+  visualArchetypes: ARRIVAL_VISUAL_ARCHETYPES,
   route: [
     {
       id: ARRIVAL_SLICE_IDS.routeShore,

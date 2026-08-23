@@ -8,6 +8,8 @@ import {
   ARRIVAL_SLICE_SEED,
   ARRIVAL_SLICE_CONTENT,
   ARRIVAL_POND,
+  ARRIVAL_VISUAL_ARCHETYPES,
+  ARRIVAL_VISUAL_GENERATORS,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
   ARRIVAL_TERRAIN_RESOLUTION,
@@ -101,6 +103,76 @@ describe('Arrival slice definition', () => {
     expect(sample(rock.id, rock.seedOffset, 4)).toEqual([
       0.9442654587328434, 0.13359356671571732, 0.08415482798591256, 0.06057725730352104,
     ]);
+  });
+
+  it('registers stable visual archetypes and their renderer generators', () => {
+    expect(ARRIVAL_VISUAL_GENERATORS.content['arrival-shore-heightfield']).toEqual({
+      id: 'visual.generator.arrival-shore-heightfield',
+      kind: 'content',
+    });
+    expect(ARRIVAL_VISUAL_ARCHETYPES.scatter.rock).toEqual({
+      id: 'visual.archetype.scatter.rock',
+      kind: 'scatter',
+      generator: 'scatter-rock',
+    });
+    expect(ARRIVAL_VISUAL_ARCHETYPES.silhouette['forest-basin'].generator).toBe(
+      'silhouette-forest-basin',
+    );
+
+    const registeredIds = [
+      ...Object.values(ARRIVAL_SLICE_DEFINITION.visualGenerators.content),
+      ...Object.values(ARRIVAL_SLICE_DEFINITION.visualGenerators.scatter),
+      ...Object.values(ARRIVAL_SLICE_DEFINITION.visualGenerators.silhouette),
+      ...Object.values(ARRIVAL_SLICE_DEFINITION.visualArchetypes.scatter),
+      ...Object.values(ARRIVAL_SLICE_DEFINITION.visualArchetypes.silhouette),
+    ].map(({ id }) => id);
+    expect(new Set(registeredIds).size).toBe(registeredIds.length);
+  });
+
+  it('rejects content that references an unknown visual generator', () => {
+    const invalid: ArrivalSliceDefinition = {
+      ...ARRIVAL_SLICE_DEFINITION,
+      content: {
+        ...ARRIVAL_SLICE_DEFINITION.content,
+        arrivalShore: {
+          ...ARRIVAL_SLICE_DEFINITION.content.arrivalShore,
+          generator: 'missing-generator' as never,
+        },
+      },
+    };
+
+    expect(validateArrivalSliceDefinition(invalid)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-generator',
+          path: 'content[0].generator',
+        }),
+      ]),
+    );
+  });
+
+  it('rejects scatter content that references an unknown archetype', () => {
+    const invalid: ArrivalSliceDefinition = {
+      ...ARRIVAL_SLICE_DEFINITION,
+      content: {
+        ...ARRIVAL_SLICE_DEFINITION.content,
+        arrivalShore: {
+          ...ARRIVAL_SLICE_DEFINITION.content.arrivalShore,
+          scatter: ARRIVAL_SLICE_DEFINITION.content.arrivalShore.scatter.map((descriptor, index) =>
+            index === 0 ? { ...descriptor, archetype: 'missing-archetype' as never } : descriptor,
+          ),
+        },
+      },
+    };
+
+    expect(validateArrivalSliceDefinition(invalid)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalid-generator',
+          path: 'content.arrivalShore.scatter[0].archetype',
+        }),
+      ]),
+    );
   });
 
   it('defines one deterministic terrain grid for rendering and collision', () => {
