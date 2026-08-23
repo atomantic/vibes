@@ -30,6 +30,7 @@ import {
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   OctahedronGeometry,
+  type Object3D,
   PerspectiveCamera,
   PlaneGeometry,
   PointLight,
@@ -56,12 +57,19 @@ import {
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
   ARRIVAL_TERRAIN_ORIGIN,
   ARRIVAL_TERRAIN_RESOLUTION,
+  assertValidArrivalSliceDefinition,
   arrivalTerrainHeight,
   createSeededRandomStream,
+  type ArrivalContentGeneratorId,
   type CrossingSegmentDescriptor,
   type DistantSilhouetteDescriptor,
   type EchoShardKey,
   type ScatterDescriptor,
+  type ScatterGeneratorId,
+  type ScatterArchetypeDescriptor,
+  type SilhouetteArchetypeDescriptor,
+  type SilhouetteGeneratorId,
+  type VisualGeneratorDescriptor,
   type Vec3,
 } from '@vibes/world';
 import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
@@ -154,6 +162,17 @@ function lerpAngle(current: number, target: number, alpha: number): number {
   return current + shortestDelta * alpha;
 }
 
+type ScatterGenerator = (descriptor: ScatterDescriptor, random: () => number) => Object3D;
+
+interface SilhouetteGeneratorContext {
+  readonly definition: DistantSilhouetteDescriptor;
+  readonly group: Group;
+  readonly material: MeshStandardMaterial;
+  readonly haloMaterial: MeshBasicMaterial;
+}
+
+type SilhouetteGenerator = (context: SilhouetteGeneratorContext) => void;
+
 export class ThreeRenderer {
   readonly canvas: HTMLCanvasElement;
   readonly #renderer: WebGLRenderer;
@@ -220,9 +239,38 @@ export class ThreeRenderer {
   #metrics: RenderMetrics = { fps: 0, frameTimeMs: 0, drawCalls: 0, triangles: 0 };
   #disposed = false;
   #nextWaterRippleTime = 0;
+  readonly #scatterGenerators: Readonly<Record<ScatterGeneratorId, ScatterGenerator>> = {
+    'scatter-rock': (descriptor, random) => {
+      return this.#createRockScatter(descriptor, random);
+    },
+    'scatter-coral': (descriptor, random) => {
+      return this.#createCoralScatter(descriptor, random);
+    },
+    'scatter-reed': (descriptor, random) => {
+      return this.#createReedScatter(descriptor, random);
+    },
+    'scatter-grass': (descriptor, random) => {
+      return this.#createGrassScatter(descriptor, random);
+    },
+  };
+  readonly #silhouetteGenerators: Readonly<Record<SilhouetteGeneratorId, SilhouetteGenerator>> = {
+    'silhouette-forest-basin': (context) => {
+      this.#buildForestBasinSilhouette(context);
+    },
+    'silhouette-wind-canyon': (context) => {
+      this.#buildWindCanyonSilhouette(context);
+    },
+    'silhouette-sky-ruin': (context) => {
+      this.#buildSkyRuinSilhouette(context);
+    },
+    'silhouette-beacon-spire': (context) => {
+      this.#buildBeaconSpireSilhouette(context);
+    },
+  };
 
   constructor(container: HTMLElement) {
     this.#container = container;
+    assertValidArrivalSliceDefinition();
     this.#renderer = new WebGLRenderer({
       antialias: true,
       alpha: false,
@@ -254,14 +302,7 @@ export class ThreeRenderer {
       const sky = this.#buildSky();
       this.#finaleBlendUniform = sky.finaleBlendUniform;
       this.#beaconHaloMaterial = sky.beaconHaloMaterial;
-      this.#buildTerrain();
-      this.#buildWater();
-      this.#buildPathRibbon();
-      this.#buildArrivalChime();
-      this.#buildCrossing();
-      this.#buildLoom();
-      this.#buildSilhouettes(sky.beaconHaloMaterial);
-      this.#buildScatter();
+      this.#buildWorldContent(sky.beaconHaloMaterial);
       this.#buildEchoShards();
       this.#buildBurstPool();
       this.#buildAvatar();
@@ -602,6 +643,56 @@ export class ThreeRenderer {
     return { material, finaleBlendUniform, beaconHaloMaterial };
   }
 
+  #buildWorldContent(beaconHaloMaterial: MeshBasicMaterial): void {
+    const content = ARRIVAL_SLICE_DEFINITION.content;
+    const builders = {
+      'arrival-shore-heightfield': () => {
+        this.#buildTerrain();
+        this.#buildWater();
+        this.#buildPathRibbon();
+        this.#buildScatter();
+      },
+      'arrival-chime-assembly': () => {
+        this.#buildArrivalChime();
+      },
+      'rising-stone-crossing': () => {
+        this.#buildCrossing();
+      },
+      'loom-ring-assembly': () => {
+        this.#buildLoom();
+      },
+      'distant-silhouette': () => {
+        this.#buildSilhouettes(beaconHaloMaterial);
+      },
+    } satisfies Readonly<Record<ArrivalContentGeneratorId, () => void>>;
+    const generatorRegistry: Readonly<Record<string, VisualGeneratorDescriptor>> =
+      ARRIVAL_SLICE_DEFINITION.visualGenerators.content;
+    const builderRegistry: Readonly<Record<string, () => void>> = builders;
+    const descriptors = [
+      content.arrivalShore,
+      content.arrivalChime,
+      content.crossing,
+      content.loom,
+      ...content.distantSilhouettes,
+    ];
+    const builtGenerators = new Set<ArrivalContentGeneratorId>();
+
+    for (const descriptor of descriptors) {
+      const generator = descriptor.generator;
+      if (builtGenerators.has(generator)) continue;
+      builtGenerators.add(generator);
+      const registration = generatorRegistry[generator];
+      if (registration?.kind !== 'content') {
+        throw new Error(`Unknown world content generator '${generator}'.`);
+      }
+      const build = builderRegistry[generator];
+      if (build === undefined) {
+        throw new Error(`No renderer for world content generator '${generator}'.`);
+      }
+      build();
+    }
+  }
+
   #buildTerrain(): void {
     const columns = ARRIVAL_TERRAIN_RESOLUTION.columns;
     const rows = ARRIVAL_TERRAIN_RESOLUTION.rows;
@@ -899,13 +990,19 @@ export class ThreeRenderer {
   }
 
   #buildSilhouettes(beaconHaloMaterial: MeshBasicMaterial): void {
+    const registry: Readonly<Record<string, SilhouetteArchetypeDescriptor>> =
+      ARRIVAL_SLICE_DEFINITION.visualArchetypes.silhouette;
+    const generators: Readonly<Record<string, SilhouetteGenerator>> = this.#silhouetteGenerators;
     for (const silhouette of ARRIVAL_SLICE_DEFINITION.content.distantSilhouettes) {
-      this.#scene.add(
-        this.#createSilhouette(
-          silhouette,
-          silhouette.archetype === 'beacon-spire' ? beaconHaloMaterial : undefined,
-        ),
-      );
+      const archetype = registry[silhouette.archetype];
+      if (archetype === undefined) {
+        throw new Error(`Unknown silhouette archetype '${silhouette.archetype}'.`);
+      }
+      const generator = generators[archetype.generator];
+      if (generator === undefined) {
+        throw new Error(`Unknown silhouette generator '${archetype.generator}'.`);
+      }
+      this.#scene.add(this.#createSilhouette(silhouette, generator, beaconHaloMaterial));
     }
     for (let index = 0; index < 13; index += 1) {
       const cloud = new Group();
@@ -931,13 +1028,19 @@ export class ThreeRenderer {
 
   #createSilhouette(
     definition: DistantSilhouetteDescriptor,
-    haloMaterial?: MeshBasicMaterial,
+    generator: SilhouetteGenerator,
+    haloMaterial: MeshBasicMaterial,
   ): Group {
     const anchor = ARRIVAL_SLICE_DEFINITION.anchors.find(
       (candidate) => candidate.id === definition.anchorId,
     );
+    if (anchor === undefined) {
+      throw new Error(
+        `Silhouette '${definition.id}' references unknown anchor '${definition.anchorId}'.`,
+      );
+    }
     const group = new Group();
-    if (anchor === undefined) return group;
+    group.name = definition.id;
     group.position.copy(toVector3(anchor.position));
     const material = new MeshStandardMaterial({
       color: definition.palette.primary,
@@ -945,42 +1048,45 @@ export class ThreeRenderer {
       emissiveIntensity: 0.12,
       roughness: 0.98,
     });
-
-    if (definition.archetype === 'forest-basin') {
-      for (let index = 0; index < 11; index += 1) {
-        const tree = new Mesh(new ConeGeometry(4 + (index % 3) * 2, 18 + index * 1.2, 6), material);
-        tree.position.set((index - 5) * 7, (index % 4) * 2, Math.abs(index - 5) * 2);
-        group.add(tree);
-      }
-    } else if (definition.archetype === 'wind-canyon') {
-      for (let index = 0; index < 5; index += 1) {
-        const mesa = new Mesh(new CylinderGeometry(6, 12, 32 + index * 5, 7), material);
-        mesa.position.set((index - 2) * 15, index * 2, Math.abs(index - 2) * 4);
-        group.add(mesa);
-      }
-    } else if (definition.archetype === 'sky-ruin') {
-      const island = new Mesh(new IcosahedronGeometry(22, 1), material);
-      island.scale.set(1.25, 0.38, 0.85);
-      group.add(island);
-      for (let index = 0; index < 4; index += 1) {
-        const tower = new Mesh(new BoxGeometry(3.5, 28 + index * 9, 3.5), material);
-        tower.position.set((index - 1.5) * 10, 16 + index * 3, (index % 2) * 5);
-        group.add(tower);
-      }
-    } else {
-      const spire = new Mesh(new CylinderGeometry(1.8, 7, 70, 7), material);
-      spire.position.y = 28;
-      group.add(spire);
-      const halo = new Mesh(
-        new TorusGeometry(10, 0.65, 8, 40),
-        haloMaterial ?? new MeshBasicMaterial({ color: definition.palette.accent }),
-      );
-      halo.position.y = 65;
-      halo.rotation.x = Math.PI / 2;
-      group.add(halo);
-    }
-
+    generator({ definition, group, material, haloMaterial });
     return group;
+  }
+
+  #buildForestBasinSilhouette({ group, material }: SilhouetteGeneratorContext): void {
+    for (let index = 0; index < 11; index += 1) {
+      const tree = new Mesh(new ConeGeometry(4 + (index % 3) * 2, 18 + index * 1.2, 6), material);
+      tree.position.set((index - 5) * 7, (index % 4) * 2, Math.abs(index - 5) * 2);
+      group.add(tree);
+    }
+  }
+
+  #buildWindCanyonSilhouette({ group, material }: SilhouetteGeneratorContext): void {
+    for (let index = 0; index < 5; index += 1) {
+      const mesa = new Mesh(new CylinderGeometry(6, 12, 32 + index * 5, 7), material);
+      mesa.position.set((index - 2) * 15, index * 2, Math.abs(index - 2) * 4);
+      group.add(mesa);
+    }
+  }
+
+  #buildSkyRuinSilhouette({ group, material }: SilhouetteGeneratorContext): void {
+    const island = new Mesh(new IcosahedronGeometry(22, 1), material);
+    island.scale.set(1.25, 0.38, 0.85);
+    group.add(island);
+    for (let index = 0; index < 4; index += 1) {
+      const tower = new Mesh(new BoxGeometry(3.5, 28 + index * 9, 3.5), material);
+      tower.position.set((index - 1.5) * 10, 16 + index * 3, (index % 2) * 5);
+      group.add(tower);
+    }
+  }
+
+  #buildBeaconSpireSilhouette({ group, material, haloMaterial }: SilhouetteGeneratorContext): void {
+    const spire = new Mesh(new CylinderGeometry(1.8, 7, 70, 7), material);
+    spire.position.y = 28;
+    group.add(spire);
+    const halo = new Mesh(new TorusGeometry(10, 0.65, 8, 40), haloMaterial);
+    halo.position.y = 65;
+    halo.rotation.x = Math.PI / 2;
+    group.add(halo);
   }
 
   #buildEchoShards(): void {
@@ -1087,44 +1193,151 @@ export class ThreeRenderer {
     };
     const streamFor = (contentId: ScatterDescriptor['id'], seedOffset: number): (() => number) =>
       createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, contentId, seedOffset);
-    const rockDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreRock);
-    const grassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrass);
+    const registry: Readonly<Record<string, ScatterArchetypeDescriptor>> =
+      ARRIVAL_SLICE_DEFINITION.visualArchetypes.scatter;
+    const generators: Readonly<Record<string, ScatterGenerator>> = this.#scatterGenerators;
+    // The launch-grass descriptor anchors the backdrop meadow rather than the
+    // instanced generators, so it is drawn below with its own stream.
     const launchGrassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch);
-    const coralDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreCoral);
-    const rockRandom = streamFor(rockDescriptor.id, rockDescriptor.seedOffset);
-    const grassRandom = streamFor(grassDescriptor.id, grassDescriptor.seedOffset);
-    const launchGrassRandom = streamFor(launchGrassDescriptor.id, launchGrassDescriptor.seedOffset);
-    const coralRandom = streamFor(coralDescriptor.id, coralDescriptor.seedOffset);
+    for (const descriptor of scatterDescriptors) {
+      if (descriptor.id === launchGrassDescriptor.id) continue;
+      const archetype = registry[descriptor.archetype];
+      if (archetype === undefined) {
+        throw new Error(`Unknown scatter archetype '${descriptor.archetype}'.`);
+      }
+      const generator = generators[archetype.generator];
+      if (generator === undefined) {
+        throw new Error(`Unknown scatter generator '${archetype.generator}'.`);
+      }
+      // Each descriptor draws from its own stream (#1). Sharing one generator-
+      // order-dependent stream made every scatter shift when any earlier one
+      // changed its count.
+      const visual = generator(descriptor, streamFor(descriptor.id, descriptor.seedOffset));
+      visual.name = archetype.id;
+      this.#scene.add(visual);
+    }
+    this.#buildBackdropMeadow(
+      // The backdrop meadow has no descriptor of its own, so it is anchored on a
+      // named stream rather than borrowing a descriptor's and correlating with it.
+      createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, 'backdrop.meadow', 0),
+      streamFor(launchGrassDescriptor.id, launchGrassDescriptor.seedOffset),
+    );
+  }
+
+  #createRockScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
     const rockGeometry = new IcosahedronGeometry(1, 1);
     const rockMaterial = new MeshStandardMaterial({ color: COLOR.rock, roughness: 0.96 });
-    const rocks = new InstancedMesh(rockGeometry, rockMaterial, 96);
+    const rocks = new InstancedMesh(rockGeometry, rockMaterial, descriptor.count);
     const transform = new Matrix4();
     const rotation = new Quaternion();
     const scale = new Vector3();
     const position = new Vector3();
-    for (let index = 0; index < 96; index += 1) {
-      let x = (rockRandom() - 0.5) * 154;
-      const z = -15 + rockRandom() * 150;
+    const up = new Vector3(0, 1, 0);
+    for (let index = 0; index < descriptor.count; index += 1) {
+      let x = (random() - 0.5) * descriptor.radiusMeters * 2;
+      const z = -15 + random() * descriptor.radiusMeters * 2;
       if (Math.abs(x) < 13) x += x < 0 ? -15 : 15;
       const y = arrivalTerrainHeight(x, z);
       position.set(x, y + 0.4, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), rockRandom() * Math.PI * 2);
-      const size = 0.55 + rockRandom() * 2.1;
-      scale.set(size * (0.7 + rockRandom() * 0.7), size, size * (0.75 + rockRandom() * 0.5));
+      rotation.setFromAxisAngle(up, random() * Math.PI * 2);
+      const size =
+        descriptor.minimumScale + random() * (descriptor.maximumScale - descriptor.minimumScale);
+      scale.set(size * (0.7 + random() * 0.7), size, size * (0.75 + random() * 0.5));
       transform.compose(position, rotation, scale);
       rocks.setMatrixAt(index, transform);
     }
     rocks.instanceMatrix.setUsage(DynamicDrawUsage);
     rocks.castShadow = true;
     rocks.receiveShadow = true;
-    this.#scene.add(rocks);
+    return rocks;
+  }
 
+  #createCoralScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
+    const coralGeometry = new ConeGeometry(0.22, 1.8, 5);
+    const coralMaterial = new MeshStandardMaterial({
+      color: COLOR.coral,
+      emissive: '#5e2e39',
+      emissiveIntensity: 0.22,
+      roughness: 0.75,
+    });
+    const coral = new InstancedMesh(coralGeometry, coralMaterial, descriptor.count);
+    const transform = new Matrix4();
+    const rotation = new Quaternion();
+    const scale = new Vector3();
+    const position = new Vector3();
+    const up = new Vector3(0, 1, 0);
+    for (let index = 0; index < descriptor.count; index += 1) {
+      let x = (random() - 0.5) * descriptor.radiusMeters * 2;
+      const z = 89 + random() * descriptor.radiusMeters;
+      if (Math.abs(x) < 6) x += x < 0 ? -8 : 8;
+      const y = arrivalTerrainHeight(x, z);
+      const size =
+        descriptor.minimumScale + random() * (descriptor.maximumScale - descriptor.minimumScale);
+      position.set(x, y + size * 0.75, z);
+      rotation.setFromAxisAngle(up, random() * Math.PI * 2);
+      scale.set(size * 0.7, size, size * 0.7);
+      transform.compose(position, rotation, scale);
+      coral.setMatrixAt(index, transform);
+    }
+    coral.castShadow = true;
+    coral.receiveShadow = true;
+    return coral;
+  }
+
+  #createReedScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
+    return createStylizedGrassField({
+      count: descriptor.count,
+      time: this.#waterTime,
+      heightAt: arrivalTerrainHeight,
+      random,
+      placement: {
+        centerX: 0,
+        centerZ: 82,
+        radiusX: descriptor.radiusMeters,
+        radiusZ: descriptor.radiusMeters,
+      },
+      clearPath: true,
+      minTerrainHeight: 0.5,
+      maxTerrainHeight: 8.5,
+      minBladeHeight: descriptor.minimumScale,
+      maxBladeHeight: descriptor.maximumScale,
+      minBladeWidth: 0.06,
+      maxBladeWidth: 0.11,
+      dirtInfluence: 0.55,
+    });
+  }
+
+  #createGrassScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
+    return createStylizedGrassField({
+      count: descriptor.count,
+      time: this.#waterTime,
+      heightAt: arrivalTerrainHeight,
+      random,
+      placement: {
+        centerX: 0,
+        centerZ: 62,
+        radiusX: descriptor.radiusMeters,
+        radiusZ: descriptor.radiusMeters,
+      },
+      clearPath: true,
+      minTerrainHeight: 2.1,
+      maxTerrainHeight: 12.8,
+      minBladeHeight: descriptor.minimumScale,
+      maxBladeHeight: descriptor.maximumScale,
+    });
+  }
+
+  #buildBackdropMeadow(
+    meadowRandom: () => number,
+    launchGrassRandom: () => number,
+  ): void {
     const grass = createStylizedGrassField({
       count: 11_000,
       time: this.#waterTime,
       heightAt: arrivalTerrainHeight,
-      random: grassRandom,
+      random: meadowRandom,
     });
+    grass.name = 'backdrop.meadow';
     this.#scene.add(grass);
 
     const launchGrass = createStylizedGrassField({
@@ -1150,29 +1363,8 @@ export class ThreeRenderer {
       maxBladeWidth: 0.085,
       dirtInfluence: 0.08,
     });
+    launchGrass.name = 'backdrop.launch-meadow';
     this.#scene.add(launchGrass);
-
-    const coralGeometry = new ConeGeometry(0.22, 1.8, 5);
-    const coralMaterial = new MeshStandardMaterial({
-      color: COLOR.coral,
-      emissive: '#5e2e39',
-      emissiveIntensity: 0.22,
-      roughness: 0.75,
-    });
-    const coral = new InstancedMesh(coralGeometry, coralMaterial, 72);
-    for (let index = 0; index < 72; index += 1) {
-      let x = (coralRandom() - 0.5) * 88;
-      const z = 89 + coralRandom() * 43;
-      if (Math.abs(x) < 6) x += x < 0 ? -8 : 8;
-      const y = arrivalTerrainHeight(x, z);
-      const size = 0.55 + coralRandom() * 1.3;
-      position.set(x, y + size * 0.75, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), coralRandom() * Math.PI * 2);
-      scale.set(size * 0.7, size, size * 0.7);
-      transform.compose(position, rotation, scale);
-      coral.setMatrixAt(index, transform);
-    }
-    this.#scene.add(coral);
   }
 
   #buildAvatar(): void {
