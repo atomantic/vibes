@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE_DEFINITION,
   ARRIVAL_SLICE_IDS,
   ARRIVAL_SLICE_POSITIONS,
@@ -126,6 +127,21 @@ describe('Arrival slice definition', () => {
     expect(silhouettes.map(({ anchorId }) => getArrivalSliceAnchor(anchorId)?.spatialRole)).toEqual(
       ['backdrop', 'backdrop', 'backdrop', 'backdrop'],
     );
+  });
+
+  it('places every Echo Shard inside the playable bounds and within reach of its terrain', () => {
+    expect(ARRIVAL_ECHO_SHARDS.map(({ key }) => key)).toEqual(['tidepool', 'ledge', 'pond']);
+    const { min, max } = ARRIVAL_SLICE_DEFINITION.playableBounds;
+    for (const shard of ARRIVAL_ECHO_SHARDS) {
+      expect(shard.position.x, shard.id).toBeGreaterThanOrEqual(min.x);
+      expect(shard.position.x, shard.id).toBeLessThanOrEqual(max.x);
+      expect(shard.position.z, shard.id).toBeGreaterThanOrEqual(min.z);
+      expect(shard.position.z, shard.id).toBeLessThanOrEqual(max.z);
+      const ground = arrivalTerrainHeight(shard.position.x, shard.position.z);
+      // Hovering low keeps each shard collectable from the ground or a wade.
+      expect(shard.position.y - ground, shard.id).toBeGreaterThan(0.8);
+      expect(shard.position.y - ground, shard.id).toBeLessThan(3);
+    }
   });
 
   it('rejects duplicate stable IDs', () => {

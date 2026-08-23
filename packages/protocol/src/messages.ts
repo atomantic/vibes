@@ -37,11 +37,14 @@ export interface EntitySnapshot {
   readonly grounded: boolean;
 }
 
+export type EchoShardKey = 'tidepool' | 'ledge' | 'pond';
+
 export interface ObjectiveSnapshot {
   readonly arrivalChimeActivated: boolean;
   readonly crossingRaised: boolean;
   readonly loomAwakened: boolean;
   readonly optionalVistaFound: boolean;
+  readonly collectedEchoShards: readonly EchoShardKey[];
   readonly checkpoint: 'shore' | 'ridge' | 'loom';
 }
 
@@ -74,7 +77,11 @@ export interface DurableEvent {
   readonly tick: number;
   readonly eventId: string;
   readonly eventType:
-    'arrival-chime-activated' | 'loom-awakened' | 'optional-vista-found' | 'checkpoint-reached';
+    | 'arrival-chime-activated'
+    | 'echo-shard-collected'
+    | 'loom-awakened'
+    | 'optional-vista-found'
+    | 'checkpoint-reached';
   readonly entityId: string;
   readonly payload: Readonly<Record<string, string | number | boolean>>;
 }

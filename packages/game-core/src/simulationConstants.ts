@@ -12,6 +12,16 @@ export const RUN_SPEED_METERS_PER_SECOND = 5.5;
 export const SPRINT_SPEED_METERS_PER_SECOND = 8;
 export const JUMP_SPEED_METERS_PER_SECOND = 8.5;
 
+/** Falling speed at which holding Jump engages the glide. */
+export const GLIDE_ENGAGE_FALL_SPEED_METERS_PER_SECOND = -1.5;
+/** Vertical speed the glide slows a fall to. */
+export const GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND = 2.4;
+/** Horizontal multiplier applied to steering input while gliding. */
+export const GLIDE_FORWARD_BOOST = 1.15;
+
+/** Radius in which an Echo Shard resonates with the player and is collected. */
+export const ECHO_SHARD_RADIUS_METERS = 2.6;
+
 export const COYOTE_TICKS = 3;
 export const JUMP_BUFFER_TICKS = 4;
 export const WORLD_CELL_SIZE_METERS = 64;

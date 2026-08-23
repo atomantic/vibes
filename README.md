@@ -6,7 +6,7 @@ Vibes is a self-hostable, browser-based multiplayer adventure where the players 
 
 The aim is both a game worth returning to and a new multiplayer development loop: playing produces evidence, consensus produces a traceable development proposal, and normal software delivery decides when and how accepted work becomes a release.
 
-> **Project status:** first playable foundation. The repository now contains a local single-player “First Light at the Loom” prototype of the compact open-world slice described in [Resonance Reach](./docs/FIRST_WORLD.md). Networking, player proposals, voting, local-model refinement, administration, and GitHub publication remain planned work—not implied capabilities of this build.
+> **Project status:** first playable foundation. The repository now contains a local single-player “First Light at the Loom” prototype of the compact open-world slice described in [Resonance Reach](./docs/FIRST_WORLD.md): explore Arrival Shore, glide off its high routes, recover the three Echo Shards hidden across the island, and wake the Loom to ignite the Beacon under a transformed sky. A synthesized soundscape (no downloaded audio assets) answers every beat of the arc. Networking, player proposals, voting, local-model refinement, administration, and GitHub publication remain planned work—not implied capabilities of this build.
 
 ## Play locally
 
@@ -20,7 +20,7 @@ pnpm dev
 
 Open [http://127.0.0.1:5175](http://127.0.0.1:5175), or use the local URL printed by Vite. The development server hot-reloads source changes; no manual UI rebuild is needed. `pnpm preview` serves a production bundle instead, and `pnpm test:e2e` always rebuilds that bundle before testing it.
 
-Use `WASD` to move, Shift to sprint, Space to jump, the mouse to look, `E` to interact, Escape to pause, and `F3` for diagnostics. A connected standard gamepad is also supported.
+Use `WASD` to move, Shift to sprint, Space to jump, hold Space in the air to glide, the mouse to look, `E` to interact, `M` to toggle sound, Escape to pause, and `F3` for diagnostics. A connected standard gamepad is also supported.
 
 Run the complete local quality gate with `pnpm check`; run production browser smoke tests with `pnpm test:e2e`. See [Contributing](./CONTRIBUTING.md) for setup details and [implementation status](./docs/IMPLEMENTATION_STATUS.md) for exact scope and open proof obligations.
 

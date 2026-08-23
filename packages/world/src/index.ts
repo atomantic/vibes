@@ -1,4 +1,6 @@
 export {
+  ARRIVAL_ECHO_SHARDS,
+  ARRIVAL_ECHO_SHARDS_REQUIRED,
   ARRIVAL_SLICE_CONTENT,
   ARRIVAL_SLICE,
   ARRIVAL_SLICE_DEFINITION,
@@ -8,7 +10,7 @@ export {
   ARRIVAL_SLICE_SEED,
   getArrivalSliceAnchor,
 } from './arrivalSlice.js';
-export type { ArrivalSliceId } from './arrivalSlice.js';
+export type { ArrivalSliceId, EchoShardDescriptor, EchoShardKey } from './arrivalSlice.js';
 
 export {
   ARRIVAL_POND,

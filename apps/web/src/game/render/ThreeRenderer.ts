@@ -7,9 +7,9 @@ import {
   BufferAttribute,
   BufferGeometry,
   CapsuleGeometry,
-  CircleGeometry,
   CatmullRomCurve3,
   CineonToneMapping,
+  CircleGeometry,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -21,6 +21,7 @@ import {
   HemisphereLight,
   IcosahedronGeometry,
   InstancedMesh,
+  type IUniform,
   Material,
   MathUtils,
   Matrix4,
@@ -47,6 +48,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import {
+  ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE_DEFINITION,
   ARRIVAL_POND,
   ARRIVAL_SLICE_POSITIONS,
@@ -56,6 +58,7 @@ import {
   arrivalTerrainHeight,
   type CrossingSegmentDescriptor,
   type DistantSilhouetteDescriptor,
+  type EchoShardKey,
   type Vec3,
 } from '@vibes/world';
 import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
@@ -89,6 +92,9 @@ export interface AvatarDiagnostics {
 const COLOR = {
   skyTop: new Color('#5faebf'),
   skyHorizon: new Color('#f3af78'),
+  finaleSkyTop: new Color('#3d6a86'),
+  finaleSkyHorizon: new Color('#ffd9a0'),
+  finaleFog: new Color('#a89f8d'),
   sand: new Color('#d7b98c'),
   grass: new Color('#628b6d'),
   rock: new Color('#8c7169'),
@@ -100,6 +106,19 @@ const COLOR = {
 const AVATAR_VISUAL_VERTICAL_OFFSET_METERS = -0.37;
 const ROBOT_AVATAR_URL = `${import.meta.env.BASE_URL}models/RobotExpressive.glb`;
 const FULL_ROTATION_RADIANS = Math.PI * 2;
+const BASE_FIELD_OF_VIEW_DEGREES = 68;
+const SPRINT_FIELD_OF_VIEW_KICK_DEGREES = 5.5;
+const GLIDE_FIELD_OF_VIEW_KICK_DEGREES = 3.5;
+const FINALE_BLEND_SECONDS = 5;
+const BURST_LIFETIME_SECONDS = 0.9;
+const ECHO_SHARD_BOB_METERS = 0.22;
+const BEACON_HALO_COLOR_DORMANT = new Color('#f3b562');
+const BEACON_HALO_COLOR_LIT = new Color('#fff3d0');
+// Traversal references mirrored from the simulation constants so presentation
+// tuning stays decoupled from authoritative gameplay values.
+const RUN_SPEED_REFERENCE_METERS_PER_SECOND = 5.5;
+const SPRINT_SPEED_REFERENCE_METERS_PER_SECOND = 8;
+const GLIDE_ENGAGE_FALL_REFERENCE_METERS_PER_SECOND = -1.5;
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -158,6 +177,23 @@ export class ThreeRenderer {
   );
   readonly #dust: Points;
   readonly #dustBase: Float32Array;
+  readonly #finaleBlendUniform: IUniform<number>;
+  readonly #background = new Color();
+  readonly #fog = new FogExp2('#8db5af', 0.0038);
+  readonly #sun: DirectionalLight;
+  readonly #hemisphere: HemisphereLight;
+  readonly #echoShardGroups = new Map<EchoShardKey, Group>();
+  readonly #echoShardBaseY = new Map<EchoShardKey, number>();
+  readonly #beaconHaloMaterial: MeshBasicMaterial;
+  readonly #bursts: {
+    readonly mesh: Mesh;
+    age: number;
+  }[] = [];
+  #collectedEchoShards: readonly EchoShardKey[] = [];
+  #shardsInitialized = false;
+  #finaleBlend = 0;
+  #currentFieldOfView = BASE_FIELD_OF_VIEW_DEGREES;
+  #lastCompassBearingDegrees = Number.NaN;
   #resizeObserver: ResizeObserver | null = null;
   readonly #container: HTMLElement;
 
@@ -166,6 +202,7 @@ export class ThreeRenderer {
     crossingRaised: false,
     loomAwakened: false,
     optionalVistaFound: false,
+    collectedEchoShards: [],
     checkpoint: 'shore',
   };
   #playerVelocity = new Vector3();
@@ -205,19 +242,25 @@ export class ThreeRenderer {
       this.canvas.addEventListener('webglcontextlost', this.#onContextLost);
       this.canvas.addEventListener('webglcontextrestored', this.#onContextRestored);
 
-      this.#scene.background = COLOR.skyHorizon;
-      this.#scene.fog = new FogExp2('#8db5af', 0.0038);
+      this.#scene.background = this.#background.copy(COLOR.skyHorizon);
+      this.#scene.fog = this.#fog;
 
-      this.#buildLights();
-      this.#buildSky();
+      const lights = this.#buildLights();
+      this.#sun = lights.sun;
+      this.#hemisphere = lights.hemisphere;
+      const sky = this.#buildSky();
+      this.#finaleBlendUniform = sky.finaleBlendUniform;
+      this.#beaconHaloMaterial = sky.beaconHaloMaterial;
       this.#buildTerrain();
       this.#buildWater();
       this.#buildPathRibbon();
       this.#buildArrivalChime();
       this.#buildCrossing();
       this.#buildLoom();
-      this.#buildSilhouettes();
+      this.#buildSilhouettes(sky.beaconHaloMaterial);
       this.#buildScatter();
+      this.#buildEchoShards();
+      this.#buildBurstPool();
       this.#buildAvatar();
       const dust = this.#buildDust();
       this.#dust = dust.points;
@@ -269,14 +312,51 @@ export class ThreeRenderer {
       this.#playerGrounded = player.grounded;
     }
 
-    if (!objectiveEquals(this.#objective, snapshot.objective)) {
-      this.#objective = snapshot.objective;
+    const previousObjective = this.#objective;
+    this.#objective = snapshot.objective;
+
+    if (!objectiveEquals(previousObjective, snapshot.objective)) {
       for (const segment of ARRIVAL_SLICE_DEFINITION.crossingSegments) {
         this.#crossingTargets.set(
           segment.id,
           snapshot.objective.crossingRaised ? segment.activePosition.y : segment.inactivePosition.y,
         );
       }
+      if (snapshot.objective.arrivalChimeActivated && !previousObjective.arrivalChimeActivated) {
+        this.#spawnBurst(ARRIVAL_SLICE_POSITIONS.arrivalChime, COLOR.resonance);
+      }
+      if (snapshot.objective.loomAwakened && !previousObjective.loomAwakened) {
+        this.#spawnBurst(ARRIVAL_SLICE_POSITIONS.loom, new Color('#ffd9a0'));
+      }
+    }
+
+    const collected = snapshot.objective.collectedEchoShards;
+    if (!this.#shardsInitialized) {
+      this.#shardsInitialized = true;
+      this.#collectedEchoShards = collected;
+      for (const [key, group] of this.#echoShardGroups) {
+        group.visible = !collected.includes(key);
+      }
+    } else if (collected.length !== this.#collectedEchoShards.length) {
+      for (const key of collected) {
+        if (this.#collectedEchoShards.includes(key)) continue;
+        const shard = ARRIVAL_ECHO_SHARDS.find(({ key: shardKey }) => shardKey === key);
+        const group = this.#echoShardGroups.get(key);
+        if (group === undefined) continue;
+        group.visible = false;
+        if (shard !== undefined) {
+          this.#spawnBurst(shard.position, new Color(shard.accentColor));
+          if (key === 'pond') {
+            addStylizedWaterRipple(
+              this.#waterState,
+              shard.position.x,
+              shard.position.z,
+              this.#waterTime.value,
+            );
+          }
+        }
+      }
+      this.#collectedEchoShards = collected;
     }
   }
 
@@ -312,6 +392,17 @@ export class ThreeRenderer {
       if (resonanceMaterial !== undefined) ring.material = resonanceMaterial;
     });
 
+    this.#echoShardGroups.forEach((group, key) => {
+      if (!group.visible) return;
+      group.rotation.y += deltaSeconds * 0.9 * motionScale;
+      const baseY = this.#echoShardBaseY.get(key) ?? group.position.y;
+      group.position.y =
+        baseY + Math.sin(elapsedSeconds * 1.4 + baseY * 3.1) * ECHO_SHARD_BOB_METERS * motionScale;
+    });
+
+    this.#updateFinale(deltaSeconds);
+    this.#updateBursts(deltaSeconds, motionScale);
+
     this.#crossingMeshes.forEach((mesh, id) => {
       const targetY = this.#crossingTargets.get(id) ?? mesh.position.y;
       mesh.position.y = MathUtils.damp(mesh.position.y, targetY, 5, deltaSeconds);
@@ -330,6 +421,54 @@ export class ThreeRenderer {
     this.#camera.position.lerp(this.#cameraDesired, 1 - Math.exp(-deltaSeconds * 9));
     this.#camera.lookAt(this.#cameraTarget);
     this.#waterState.cameraXZ.value.set(this.#camera.position.x, this.#camera.position.z);
+
+    // Speed reads through a gentle field-of-view widen; gliding adds a little
+    // more so soaring off the ridge feels faster than sprinting the path.
+    const speedRatio = MathUtils.clamp(
+      (horizontalSpeed - RUN_SPEED_REFERENCE_METERS_PER_SECOND) /
+        (SPRINT_SPEED_REFERENCE_METERS_PER_SECOND - RUN_SPEED_REFERENCE_METERS_PER_SECOND),
+      0,
+      1,
+    );
+    const airborneKick =
+      !this.#playerGrounded &&
+      this.#playerVelocity.y < GLIDE_ENGAGE_FALL_REFERENCE_METERS_PER_SECOND
+        ? GLIDE_FIELD_OF_VIEW_KICK_DEGREES
+        : 0;
+    const targetFieldOfView = reducedMotion
+      ? BASE_FIELD_OF_VIEW_DEGREES
+      : BASE_FIELD_OF_VIEW_DEGREES + speedRatio * SPRINT_FIELD_OF_VIEW_KICK_DEGREES + airborneKick;
+    if (Math.abs(targetFieldOfView - this.#currentFieldOfView) > 0.01) {
+      this.#currentFieldOfView = MathUtils.damp(
+        this.#currentFieldOfView,
+        targetFieldOfView,
+        4.5,
+        deltaSeconds,
+      );
+      this.#camera.fov = this.#currentFieldOfView;
+      this.#camera.updateProjectionMatrix();
+    }
+
+    // The HUD compass is driven straight from the world transform so it stays
+    // frame-locked without routing React state through the render loop. The
+    // write is skipped while the bearing is visually unchanged, which keeps
+    // slow software-rendered machines from repainting the HUD every frame.
+    const bearingToLoom = Math.atan2(
+      ARRIVAL_SLICE_POSITIONS.loom.x - this.#avatar.position.x,
+      ARRIVAL_SLICE_POSITIONS.loom.z - this.#avatar.position.z,
+    );
+    const screenBearingDegrees =
+      MathUtils.euclideanModulo(
+        ((camera.yaw + Math.PI - bearingToLoom) * 180) / Math.PI + 180,
+        360,
+      ) - 180;
+    if (Math.abs(screenBearingDegrees - this.#lastCompassBearingDegrees) > 0.5) {
+      this.#lastCompassBearingDegrees = screenBearingDegrees;
+      document.documentElement.style.setProperty(
+        '--compass-bearing',
+        `${screenBearingDegrees.toFixed(1)}deg`,
+      );
+    }
 
     const avatarTerrainHeight = arrivalTerrainHeight(
       this.#avatar.position.x,
@@ -385,8 +524,9 @@ export class ThreeRenderer {
     this.canvas.remove();
   }
 
-  #buildLights(): void {
-    this.#scene.add(new HemisphereLight('#b9e3d8', '#183a3f', 2.5));
+  #buildLights(): { readonly sun: DirectionalLight; readonly hemisphere: HemisphereLight } {
+    const hemisphere = new HemisphereLight('#b9e3d8', '#183a3f', 2.5);
+    this.#scene.add(hemisphere);
     this.#scene.add(new AmbientLight('#ffceae', 0.55));
 
     const sun = new DirectionalLight('#ffe0b8', 4.2);
@@ -401,16 +541,25 @@ export class ThreeRenderer {
     sun.shadow.camera.far = 210;
     sun.shadow.bias = -0.00018;
     this.#scene.add(sun);
+    return { sun, hemisphere };
   }
 
-  #buildSky(): void {
+  #buildSky(): {
+    readonly material: ShaderMaterial;
+    readonly finaleBlendUniform: IUniform<number>;
+    readonly beaconHaloMaterial: MeshBasicMaterial;
+  } {
     const geometry = new SphereGeometry(500, 28, 16);
+    const finaleBlendUniform: IUniform<number> = { value: 0 };
     const material = new ShaderMaterial({
       side: BackSide,
       depthWrite: false,
       uniforms: {
-        topColor: { value: COLOR.skyTop },
-        horizonColor: { value: COLOR.skyHorizon },
+        topColor: { value: COLOR.skyTop.clone() },
+        horizonColor: { value: COLOR.skyHorizon.clone() },
+        finaleBlend: finaleBlendUniform,
+        topColorFinale: { value: COLOR.finaleSkyTop },
+        horizonColorFinale: { value: COLOR.finaleSkyHorizon },
         sunColor: { value: new Color('#ffe4ba') },
       },
       vertexShader: `
@@ -424,20 +573,30 @@ export class ThreeRenderer {
       fragmentShader: `
         uniform vec3 topColor;
         uniform vec3 horizonColor;
+        uniform vec3 topColorFinale;
+        uniform vec3 horizonColorFinale;
+        uniform float finaleBlend;
         uniform vec3 sunColor;
         varying vec3 worldDirection;
         void main() {
           float heightMix = smoothstep(-0.12, 0.68, worldDirection.y);
-          vec3 color = mix(horizonColor, topColor, heightMix);
+          vec3 top = mix(topColor, topColorFinale, finaleBlend);
+          vec3 horizon = mix(horizonColor, horizonColorFinale, finaleBlend);
+          vec3 color = mix(horizon, top, heightMix);
           vec3 sunDirection = normalize(vec3(-0.44, 0.55, 0.7));
           float sun = pow(max(dot(worldDirection, sunDirection), 0.0), 180.0);
-          color += sunColor * sun * 1.8;
+          color += sunColor * sun * 1.8 * (1.0 - finaleBlend * 0.55);
           gl_FragColor = vec4(color, 1.0);
         }
       `,
     });
     const sky = new Mesh(geometry, material);
     this.#scene.add(sky);
+
+    // The Beacon halo shares its material with the finale so awakening the
+    // Loom visibly ignites the distant spire promised since the first ridge.
+    const beaconHaloMaterial = new MeshBasicMaterial({ color: '#f3b562' });
+    return { material, finaleBlendUniform, beaconHaloMaterial };
   }
 
   #buildTerrain(): void {
@@ -736,9 +895,14 @@ export class ThreeRenderer {
     this.#scene.add(group);
   }
 
-  #buildSilhouettes(): void {
+  #buildSilhouettes(beaconHaloMaterial: MeshBasicMaterial): void {
     for (const silhouette of ARRIVAL_SLICE_DEFINITION.content.distantSilhouettes) {
-      this.#scene.add(this.#createSilhouette(silhouette));
+      this.#scene.add(
+        this.#createSilhouette(
+          silhouette,
+          silhouette.archetype === 'beacon-spire' ? beaconHaloMaterial : undefined,
+        ),
+      );
     }
     for (let index = 0; index < 13; index += 1) {
       const cloud = new Group();
@@ -762,7 +926,10 @@ export class ThreeRenderer {
     }
   }
 
-  #createSilhouette(definition: DistantSilhouetteDescriptor): Group {
+  #createSilhouette(
+    definition: DistantSilhouetteDescriptor,
+    haloMaterial?: MeshBasicMaterial,
+  ): Group {
     const anchor = ARRIVAL_SLICE_DEFINITION.anchors.find(
       (candidate) => candidate.id === definition.anchorId,
     );
@@ -803,7 +970,7 @@ export class ThreeRenderer {
       group.add(spire);
       const halo = new Mesh(
         new TorusGeometry(10, 0.65, 8, 40),
-        new MeshBasicMaterial({ color: definition.palette.accent }),
+        haloMaterial ?? new MeshBasicMaterial({ color: definition.palette.accent }),
       );
       halo.position.y = 65;
       halo.rotation.x = Math.PI / 2;
@@ -811,6 +978,99 @@ export class ThreeRenderer {
     }
 
     return group;
+  }
+
+  #buildEchoShards(): void {
+    for (const shard of ARRIVAL_ECHO_SHARDS) {
+      const group = new Group();
+      group.position.set(shard.position.x, shard.position.y, shard.position.z);
+
+      const accentColor = new Color(shard.accentColor);
+      const coreMaterial = new MeshStandardMaterial({
+        color: accentColor,
+        emissive: accentColor,
+        emissiveIntensity: 2.4,
+        roughness: 0.16,
+        metalness: 0.25,
+      });
+      const core = new Mesh(new OctahedronGeometry(0.42, 0), coreMaterial);
+      core.castShadow = true;
+      group.add(core);
+      const halo = new Mesh(new TorusGeometry(0.72, 0.055, 8, 40), coreMaterial);
+      halo.rotation.x = Math.PI / 2.4;
+      group.add(halo);
+      // Emissive-only on purpose: three extra point lights cost real fragment
+      // work on integrated GPUs, and the glowing halo already reads at distance.
+      this.#resonanceMaterials.push(coreMaterial);
+
+      this.#echoShardGroups.set(shard.key, group);
+      this.#echoShardBaseY.set(shard.key, shard.position.y);
+      this.#scene.add(group);
+    }
+  }
+
+  #buildBurstPool(): void {
+    const geometry = new TorusGeometry(0.5, 0.06, 8, 36);
+    for (let index = 0; index < 6; index += 1) {
+      const material = new MeshBasicMaterial({
+        color: COLOR.resonance,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const mesh = new Mesh(geometry, material);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.visible = false;
+      mesh.renderOrder = 4;
+      this.#scene.add(mesh);
+      this.#bursts.push({ mesh, age: BURST_LIFETIME_SECONDS });
+    }
+  }
+
+  #spawnBurst(position: Vec3, color: Color): void {
+    const burst = this.#bursts.find(({ age }) => age >= BURST_LIFETIME_SECONDS);
+    if (burst === undefined) return;
+    burst.age = 0;
+    burst.mesh.position.set(position.x, position.y, position.z);
+    (burst.mesh.material as MeshBasicMaterial).color.copy(color);
+    burst.mesh.visible = true;
+  }
+
+  // Awakening the Loom is the world's answer: the sky settles into dusk gold,
+  // the fog warms, the sun rests, and the distant Beacon finally ignites.
+  #updateFinale(deltaSeconds: number): void {
+    const targetBlend = this.#objective.loomAwakened ? 1 : 0;
+    if (this.#finaleBlend === 0 && targetBlend === 0) return;
+    if (this.#finaleBlend !== targetBlend) {
+      const step = deltaSeconds / (FINALE_BLEND_SECONDS * 0.45);
+      this.#finaleBlend = MathUtils.clamp(
+        this.#finaleBlend + Math.sign(targetBlend - this.#finaleBlend) * step,
+        0,
+        1,
+      );
+    }
+    const eased = this.#finaleBlend * this.#finaleBlend * (3 - 2 * this.#finaleBlend);
+
+    this.#finaleBlendUniform.value = eased;
+    this.#fog.color.copy(COLOR.skyTop).lerp(COLOR.finaleFog, eased);
+    this.#background.copy(COLOR.skyHorizon).lerp(COLOR.finaleSkyHorizon, eased);
+    this.#sun.intensity = MathUtils.lerp(4.2, 2.7, eased);
+    this.#hemisphere.intensity = MathUtils.lerp(2.5, 1.8, eased);
+    this.#beaconHaloMaterial.color
+      .set(BEACON_HALO_COLOR_DORMANT)
+      .lerp(BEACON_HALO_COLOR_LIT, eased);
+  }
+
+  #updateBursts(deltaSeconds: number, motionScale: number): void {
+    for (const burst of this.#bursts) {
+      if (burst.age >= BURST_LIFETIME_SECONDS) continue;
+      burst.age += deltaSeconds * Math.max(motionScale, 0.05);
+      const progress = Math.min(burst.age / BURST_LIFETIME_SECONDS, 1);
+      const eased = 1 - (1 - progress) * (1 - progress);
+      burst.mesh.scale.setScalar(0.6 + eased * 6.5);
+      (burst.mesh.material as MeshBasicMaterial).opacity = (1 - progress) * 0.85;
+      if (progress >= 1) burst.mesh.visible = false;
+    }
   }
 
   #buildScatter(): void {

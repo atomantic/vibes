@@ -74,15 +74,21 @@ const test = base.extend<RuntimeFailureCapture>({
 async function openReadyWorld(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page).toHaveTitle('Vibes — First Light at the Loom');
-  await page.waitForFunction(() => {
-    const hook = (
-      globalThis as typeof globalThis & {
-        __VIBES_TEST__?: VibesTestHook;
-      }
-    ).__VIBES_TEST__;
+  // First boot compiles every WebGL program before the first frame, which can
+  // take tens of seconds on software renderers even though warm boots are fast.
+  await page.waitForFunction(
+    () => {
+      const hook = (
+        globalThis as typeof globalThis & {
+          __VIBES_TEST__?: VibesTestHook;
+        }
+      ).__VIBES_TEST__;
 
-    return hook?.ready === true;
-  });
+      return hook?.ready === true;
+    },
+    undefined,
+    { timeout: 45_000 },
+  );
 
   await expect(page.getByRole('main', { name: 'Vibes game' })).toBeVisible();
   await expect(page.getByRole('status')).toHaveText('World ready');
@@ -421,7 +427,7 @@ test('keeps the Loom announcement when its checkpoint is recorded in the same ti
   });
 
   await expect(page.locator('.announcement')).toHaveText(
-    'The Loom wakes. Three empty Shard sockets call across the Reach.',
+    'The three Shards ring as one. The Loom wakes and the Beacon answers.',
   );
 });
 

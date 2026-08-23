@@ -53,6 +53,48 @@ export const ARRIVAL_SLICE_IDS = {
 
 export type ArrivalSliceId = (typeof ARRIVAL_SLICE_IDS)[keyof typeof ARRIVAL_SLICE_IDS];
 
+export type EchoShardKey = 'tidepool' | 'ledge' | 'pond';
+
+export interface EchoShardDescriptor {
+  readonly key: EchoShardKey;
+  readonly id: StableWorldId;
+  /** Hover anchor in world space; renderers bob around this height. */
+  readonly position: Vec3;
+  readonly accentColor: `#${string}`;
+  readonly hint: string;
+}
+
+/**
+ * Three durable Echo Shards hidden across Arrival Shore. Collecting all three
+ * is required before the Loom will awaken, which turns the island's optional
+ * landmarks into a purposeful exploration loop.
+ */
+export const ARRIVAL_ECHO_SHARDS = [
+  {
+    key: 'tidepool',
+    id: 'collectible.echo-shard.tidepool',
+    position: { x: -20, y: 3.9, z: 82 },
+    accentColor: '#63f2db',
+    hint: 'Where the tidepools catch the light.',
+  },
+  {
+    key: 'ledge',
+    id: 'collectible.echo-shard.ledge',
+    position: { x: 12.5, y: 6.9, z: 66 },
+    accentColor: '#f3b562',
+    hint: 'High beside the mantle ledge.',
+  },
+  {
+    key: 'pond',
+    id: 'collectible.echo-shard.pond',
+    position: { x: 11, y: 1.65, z: 104 },
+    accentColor: '#9873b9',
+    hint: 'Wading water keeps it company.',
+  },
+] as const satisfies readonly EchoShardDescriptor[];
+
+export const ARRIVAL_ECHO_SHARDS_REQUIRED = ARRIVAL_ECHO_SHARDS.length;
+
 export const ARRIVAL_SLICE_POSITIONS = {
   arrivalShore: { x: 0, y: 2, z: 100 },
   arrivalSpawn: { x: 0, y: 2, z: 112 },

@@ -10,12 +10,17 @@ export const WorldPositionSchema = z
   })
   .strict();
 
+export const EchoShardKeySchema = z.enum(['tidepool', 'ledge', 'pond']);
+
+export const CollectedEchoShardsSchema = z.array(EchoShardKeySchema).max(3).default([]);
+
 export const ObjectiveSnapshotSchema = z
   .object({
     arrivalChimeActivated: z.boolean(),
     crossingRaised: z.boolean(),
     loomAwakened: z.boolean(),
     optionalVistaFound: z.boolean(),
+    collectedEchoShards: CollectedEchoShardsSchema,
     checkpoint: z.enum(['shore', 'ridge', 'loom']),
   })
   .strict()
@@ -35,6 +40,13 @@ export const ObjectiveSnapshotSchema = z
         code: 'custom',
         path: ['loomAwakened'],
         message: 'Loom state violates the Arrival progression.',
+      });
+    }
+    if (new Set(objective.collectedEchoShards).size !== objective.collectedEchoShards.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['collectedEchoShards'],
+        message: 'Collected Echo Shards must be unique.',
       });
     }
   });
@@ -67,6 +79,7 @@ export const ArrivalSliceSaveSchema = z
     arrivalChimeActivated: z.boolean(),
     loomAwakened: z.boolean(),
     optionalVistaFound: z.boolean(),
+    collectedEchoShards: CollectedEchoShardsSchema,
     checkpoint: z.enum(['shore', 'ridge', 'loom']),
     bestArrivalTimeMs: z.number().int().nonnegative().optional(),
   })
@@ -77,6 +90,13 @@ export const ArrivalSliceSaveSchema = z
         code: 'custom',
         path: ['loomAwakened'],
         message: 'The Arrival Chime must be active before the Loom can awaken.',
+      });
+    }
+    if (new Set(save.collectedEchoShards).size !== save.collectedEchoShards.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['collectedEchoShards'],
+        message: 'Collected Echo Shards must be unique.',
       });
     }
     if (save.loomAwakened !== (save.checkpoint === 'loom')) {
