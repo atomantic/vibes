@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE_DEFINITION,
   ARRIVAL_SLICE_SEED,
   ARRIVAL_SLICE_POSITIONS,
@@ -13,6 +14,7 @@ import type {
   SimulationSnapshot,
 } from '@vibes/protocol';
 
+import { SynthAudio } from './game/audio/SynthAudio';
 import { GameView } from './game/GameView';
 import { persistArrivalSave, readArrivalSave } from './game/persistence';
 import type { RenderMetrics } from './game/render/ThreeRenderer';
@@ -27,6 +29,7 @@ interface PlayerSettings {
   readonly reducedMotion: boolean;
   readonly cameraSensitivity: number;
   readonly uiScale: number;
+  readonly soundMuted: boolean;
 }
 
 const SETTINGS_KEY = 'vibes.player-settings.v1';
@@ -37,6 +40,7 @@ const DEFAULT_OBJECTIVE: ObjectiveSnapshot = {
   crossingRaised: false,
   loomAwakened: false,
   optionalVistaFound: false,
+  collectedEchoShards: [],
   checkpoint: 'shore',
 };
 
@@ -45,7 +49,12 @@ function readSettings(): PlayerSettings {
   try {
     const raw = window.localStorage.getItem(SETTINGS_KEY);
     if (raw === null) {
-      return { reducedMotion: prefersReducedMotion, cameraSensitivity: 1, uiScale: 1 };
+      return {
+        reducedMotion: prefersReducedMotion,
+        cameraSensitivity: 1,
+        uiScale: 1,
+        soundMuted: false,
+      };
     }
     const value = JSON.parse(raw) as Partial<PlayerSettings>;
     return {
@@ -57,9 +66,15 @@ function readSettings(): PlayerSettings {
           : 1,
       uiScale:
         typeof value.uiScale === 'number' ? Math.min(1.35, Math.max(0.85, value.uiScale)) : 1,
+      soundMuted: value.soundMuted === true,
     };
   } catch {
-    return { reducedMotion: prefersReducedMotion, cameraSensitivity: 1, uiScale: 1 };
+    return {
+      reducedMotion: prefersReducedMotion,
+      cameraSensitivity: 1,
+      uiScale: 1,
+      soundMuted: false,
+    };
   }
 }
 
@@ -67,9 +82,22 @@ function distanceTo(position: PlayerPosition, target: PlayerPosition): number {
   return Math.hypot(position.x - target.x, position.y - target.y, position.z - target.z);
 }
 
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
 function objectiveText(objective: ObjectiveSnapshot): string {
-  if (objective.loomAwakened) return 'The Loom is awake. Three Shards are still missing.';
-  if (objective.arrivalChimeActivated) return 'Cross the awakened path and reach the Loom.';
+  if (objective.loomAwakened) return 'The Loom is awake. The Reach remembers your light.';
+  if (objective.arrivalChimeActivated) {
+    const remaining = ARRIVAL_ECHO_SHARDS.length - objective.collectedEchoShards.length;
+    if (remaining > 0) {
+      return `Wake the three Echo Shards across the island — ${String(remaining)} still hidden.`;
+    }
+    return 'Every Shard resonates. Return to the Loom and wake it.';
+  }
   if (objective.checkpoint === 'ridge') return 'Attune the Arrival Chime to open the way.';
   return 'Follow the answering light toward the ridge.';
 }
@@ -80,6 +108,7 @@ function canTimeArrival(save: ArrivalSliceSave | undefined): boolean {
     (!save.arrivalChimeActivated &&
       !save.loomAwakened &&
       !save.optionalVistaFound &&
+      save.collectedEchoShards.length === 0 &&
       save.checkpoint === 'shore')
   );
 }
@@ -110,14 +139,20 @@ export function App(): React.JSX.Element {
   const [progressPersistenceStatus, setProgressPersistenceStatus] = useState('');
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [resetSequence, setResetSequence] = useState(0);
+  const [celebrationOpen, setCelebrationOpen] = useState(false);
   const lastSaveRef = useRef('');
   const initialSnapshotReceivedRef = useRef(false);
   const bestArrivalTimeRef = useRef(persistedArrival?.bestArrivalTimeMs);
   const previousLoomStateRef = useRef(persistedArrival?.loomAwakened ?? false);
   const arrivalTimerArmedRef = useRef(canTimeArrival(persistedArrival));
   const arrivalTimerActiveRef = useRef(false);
+  const completedJourneyTimeRef = useRef<number | null>(
+    persistedArrival?.loomAwakened === true ? (persistedArrival.bestArrivalTimeMs ?? null) : null,
+  );
+  const celebrationShownRef = useRef(persistedArrival?.loomAwakened ?? false);
   const simulationTickRateRef = useRef(30);
   const resetPendingRef = useRef(false);
+  const audioRef = useRef<SynthAudio | null>(null);
   const pauseResumeButtonRef = useRef<HTMLButtonElement>(null);
   const fatalRetryButtonRef = useRef<HTMLButtonElement>(null);
   const announcementTimeoutRef = useRef<number | undefined>(undefined);
@@ -128,6 +163,9 @@ export function App(): React.JSX.Element {
 
   const currentObjective = useMemo(() => objectiveText(objective), [objective]);
   const visiblePersistenceStatus = settingsPersistenceStatus || progressPersistenceStatus;
+  const journeyTimeMs =
+    completedJourneyTimeRef.current ?? Math.round((tick / simulationTickRateRef.current) * 1_000);
+  const collectedShardCount = objective.collectedEchoShards.length;
 
   const showAnnouncement = useCallback((message: string): void => {
     if (announcementTimeoutRef.current !== undefined) {
@@ -141,10 +179,43 @@ export function App(): React.JSX.Element {
   }, []);
 
   const beginJourney = useCallback((): void => {
+    if (audioRef.current === null) {
+      const audio = new SynthAudio();
+      audio.setMuted(settings.soundMuted);
+      audio.unlock();
+      audio.startAmbient();
+      audioRef.current = audio;
+    } else {
+      audioRef.current.unlock();
+    }
     setStarted(true);
     setPaused(false);
     arrivalTimerActiveRef.current = arrivalTimerArmedRef.current;
-  }, []);
+  }, [settings.soundMuted]);
+
+  useEffect(() => {
+    audioRef.current?.setMuted(settings.soundMuted);
+  }, [settings.soundMuted]);
+
+  // The celebration is a quiet banner, not a modal: play continues underneath
+  // and it steps aside on its own after a generous pause.
+  useEffect(() => {
+    if (!celebrationOpen) return;
+    const timeout = window.setTimeout(() => {
+      setCelebrationOpen(false);
+    }, 14_000);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [celebrationOpen]);
+
+  useEffect(
+    () => () => {
+      audioRef.current?.dispose();
+      audioRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -200,7 +271,18 @@ export function App(): React.JSX.Element {
       if (event.code === 'Enter' && !started && status === 'World ready') {
         beginJourney();
       } else if (event.code === 'Escape' && started) {
+        if (celebrationOpen) {
+          setCelebrationOpen(false);
+          return;
+        }
         setPaused((value) => !value);
+      } else if (event.code === 'KeyM' && started) {
+        event.preventDefault();
+        setSettings((current) => {
+          const soundMuted = !current.soundMuted;
+          showAnnouncement(soundMuted ? 'Sound muted.' : 'Sound on.');
+          return { ...current, soundMuted };
+        });
       } else if (event.code === 'F3') {
         event.preventDefault();
         setDiagnostics((value) => !value);
@@ -210,10 +292,10 @@ export function App(): React.JSX.Element {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [beginJourney, started, status]);
+  }, [beginJourney, celebrationOpen, showAnnouncement, started, status]);
 
   useEffect(() => {
-    if (!started || paused) {
+    if (!started || paused || fatalError !== null) {
       setPrompt(null);
       return;
     }
@@ -231,17 +313,26 @@ export function App(): React.JSX.Element {
       chimeDistance <= chimeInteraction.radiusMeters
     ) {
       setPrompt(`E  ·  ${chimeInteraction.prompt}`);
-    } else if (
+      return;
+    }
+    if (
       objective.arrivalChimeActivated &&
       !objective.loomAwakened &&
       loomInteraction !== undefined &&
-      loomDistance <= loomInteraction.radiusMeters
+      loomDistance <= Math.max(loomInteraction.radiusMeters + 5, 8)
     ) {
-      setPrompt(`E  ·  ${loomInteraction.prompt}`);
-    } else {
-      setPrompt(null);
+      const hiddenShards = ARRIVAL_ECHO_SHARDS.length - objective.collectedEchoShards.length;
+      setPrompt(
+        objective.collectedEchoShards.length >= ARRIVAL_ECHO_SHARDS.length
+          ? `E  ·  ${loomInteraction.prompt}`
+          : `The Loom sleeps — ${String(hiddenShards)} Echo Shard${
+              hiddenShards === 1 ? '' : 's'
+            } still hidden.`,
+      );
+      return;
     }
-  }, [objective.arrivalChimeActivated, objective.loomAwakened, paused, position, started]);
+    setPrompt(null);
+  }, [fatalError, objective, paused, position, started]);
 
   const handleReady = useCallback((ready: SimulationReady): void => {
     simulationTickRateRef.current = ready.tickRate;
@@ -272,10 +363,15 @@ export function App(): React.JSX.Element {
             bestArrivalTimeRef.current ?? arrivalTimeMs,
             arrivalTimeMs,
           );
+          completedJourneyTimeRef.current = arrivalTimeMs;
         }
         previousLoomStateRef.current = true;
         arrivalTimerArmedRef.current = false;
         arrivalTimerActiveRef.current = false;
+        if (!celebrationShownRef.current) {
+          celebrationShownRef.current = true;
+          setCelebrationOpen(true);
+        }
       }
 
       const save: ArrivalSliceSave = {
@@ -284,6 +380,7 @@ export function App(): React.JSX.Element {
         arrivalChimeActivated: snapshot.objective.arrivalChimeActivated,
         loomAwakened: snapshot.objective.loomAwakened,
         optionalVistaFound: snapshot.objective.optionalVistaFound,
+        collectedEchoShards: [...snapshot.objective.collectedEchoShards],
         checkpoint: snapshot.objective.checkpoint,
         ...(bestArrivalTimeRef.current === undefined
           ? {}
@@ -336,14 +433,35 @@ export function App(): React.JSX.Element {
         return;
       }
 
-      const caption =
-        event.eventType === 'arrival-chime-activated'
-          ? 'The Chime answers. Ancient stones rise across the hollow.'
-          : event.eventType === 'loom-awakened'
-            ? 'The Loom wakes. Three empty Shard sockets call across the Reach.'
-            : event.eventType === 'optional-vista-found'
-              ? 'A hidden resonance joins your journey.'
-              : 'A safe return point has been remembered.';
+      const audio = audioRef.current;
+      let caption: string;
+      switch (event.eventType) {
+        case 'arrival-chime-activated':
+          caption = 'The Chime answers. Ancient stones rise across the hollow.';
+          audio?.playChimeActivation();
+          break;
+        case 'echo-shard-collected': {
+          const collectedCount = Number(event.payload['collectedCount'] ?? 0);
+          caption =
+            collectedCount >= ARRIVAL_ECHO_SHARDS.length
+              ? 'The third Echo Shard rings out. The Loom is waiting.'
+              : `An Echo Shard joins you — ${String(collectedCount)} of ${String(
+                  ARRIVAL_ECHO_SHARDS.length,
+                )} resonate.`;
+          audio?.playEchoShard(collectedCount);
+          break;
+        }
+        case 'loom-awakened':
+          caption = 'The three Shards ring as one. The Loom wakes and the Beacon answers.';
+          audio?.playFinale();
+          break;
+        case 'optional-vista-found':
+          caption = 'A hidden resonance joins your journey.';
+          break;
+        default:
+          caption = 'A safe return point has been remembered.';
+          break;
+      }
       announcementEventRef.current = { tick: event.tick, priority };
       showAnnouncement(caption);
     },
@@ -373,10 +491,13 @@ export function App(): React.JSX.Element {
     setResetSequence((value) => value + 1);
     setObjective(DEFAULT_OBJECTIVE);
     setPaused(false);
+    setCelebrationOpen(false);
     setStarted(true);
     previousLoomStateRef.current = false;
     arrivalTimerArmedRef.current = true;
     arrivalTimerActiveRef.current = true;
+    completedJourneyTimeRef.current = null;
+    celebrationShownRef.current = false;
     bestArrivalTimeRef.current = undefined;
     lastSaveRef.current = '';
   };
@@ -419,7 +540,18 @@ export function App(): React.JSX.Element {
       {started && !fatalError ? (
         <>
           <section className="objective-card" aria-label="Current objective">
-            <span className="eyebrow">ARRIVAL SHORE</span>
+            <div className="objective-heading">
+              <span className="eyebrow">ARRIVAL SHORE</span>
+              <span
+                className="journey-timer"
+                role="timer"
+                aria-label={
+                  completedJourneyTimeRef.current === null ? 'Journey time' : 'Final journey time'
+                }
+              >
+                {formatDuration(journeyTimeMs)}
+              </span>
+            </div>
             <h1>{currentObjective}</h1>
             <div className="objective-progress" aria-label="Journey progress">
               <span className="progress-mark complete">✓</span>
@@ -442,25 +574,94 @@ export function App(): React.JSX.Element {
                 ◉
               </span>
             </div>
+            <div
+              className="shard-tracker"
+              aria-label={`Echo Shards recovered: ${collectedShardCount.toString()} of 3`}
+            >
+              {ARRIVAL_ECHO_SHARDS.map((shard) => {
+                const collected = objective.collectedEchoShards.includes(shard.key);
+                return (
+                  <span
+                    key={shard.key}
+                    className={collected ? 'shard-chip collected' : 'shard-chip'}
+                    style={
+                      collected
+                        ? ({ '--shard-accent': shard.accentColor } as React.CSSProperties)
+                        : undefined
+                    }
+                    title={
+                      collected
+                        ? `${shard.key} Echo Shard recovered`
+                        : `Echo Shard hidden — ${shard.hint}`
+                    }
+                  >
+                    ◇ {shard.key}
+                  </span>
+                );
+              })}
+            </div>
           </section>
 
           <div className="landmark-compass" aria-label="The Loom lies ahead">
-            <span className="loom-glyph" aria-hidden="true">
-              ⌾
-            </span>
+            <span className="compass-needle" aria-hidden="true" />
             <span>THE LOOM</span>
           </div>
 
           <div className="crosshair" aria-hidden="true" />
-          {prompt !== null ? <div className="interaction-prompt">{prompt}</div> : null}
+          {prompt !== null ? (
+            <div
+              className={prompt.startsWith('E ') ? 'interaction-prompt' : 'interaction-prompt hint'}
+            >
+              {prompt}
+            </div>
+          ) : null}
           <div className="control-hint" aria-hidden="true">
             <span>WASD move</span>
             <span>Shift sprint</span>
             <span>Space jump</span>
-            <span>Click look</span>
+            <span>Hold Space glide</span>
+            <span>M sound</span>
             <span>F3 diagnostics</span>
           </div>
         </>
+      ) : null}
+
+      {started && celebrationOpen && !fatalError ? (
+        <section className="celebration-card" aria-labelledby="celebration-title">
+          <span className="eyebrow">THE BEACON ANSWERS</span>
+          <h2 id="celebration-title">First Light restored</h2>
+          <p>
+            Three Shards, one Loom, and a sky that will not forget today. The Reach stays open —
+            wander, or begin the journey anew.
+          </p>
+          <dl className="celebration-stats">
+            <div>
+              <dt>Journey time</dt>
+              <dd>{formatDuration(completedJourneyTimeRef.current ?? journeyTimeMs)}</dd>
+            </div>
+            <div>
+              <dt>Best time</dt>
+              <dd>
+                {bestArrivalTimeRef.current === undefined
+                  ? '—'
+                  : formatDuration(bestArrivalTimeRef.current)}
+              </dd>
+            </div>
+            <div>
+              <dt>Echo Shards</dt>
+              <dd>3 / 3</dd>
+            </div>
+          </dl>
+          <button
+            className="text-button compact"
+            type="button"
+            onClick={() => {
+              setCelebrationOpen(false);
+            }}
+          >
+            Keep exploring
+          </button>
+        </section>
       ) : null}
 
       {!started && fatalError === null ? (
@@ -468,8 +669,8 @@ export function App(): React.JSX.Element {
           <span className="eyebrow">RESONANCE REACH · PROTOTYPE 01</span>
           <h1 id="arrival-title">First Light at the Loom</h1>
           <p>
-            The island has been quiet for generations. Follow the answering light and wake what
-            waits beyond the ridge.
+            The island has been quiet for generations. Follow the answering light, wake the three
+            Echo Shards hidden across the shore, and give the sleeping Loom its voice back.
           </p>
           <button
             className="primary-button"
@@ -482,7 +683,7 @@ export function App(): React.JSX.Element {
           </button>
           <div className="arrival-details">
             <span>Procedural world</span>
-            <span>Local authority</span>
+            <span>Glide across the Reach</span>
             <span>Progress saved</span>
           </div>
         </section>
@@ -558,6 +759,19 @@ export function App(): React.JSX.Element {
               }}
             />
           </label>
+          <label className="setting-row">
+            <span>
+              <strong>Sound</strong>
+              <small>Synthesized ambience and resonance cues (M)</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={!settings.soundMuted}
+              onChange={(event) => {
+                setSettings((current) => ({ ...current, soundMuted: !event.target.checked }));
+              }}
+            />
+          </label>
           <button className="text-button" type="button" onClick={restartJourney}>
             Restart journey
           </button>
@@ -617,6 +831,12 @@ export function App(): React.JSX.Element {
           <div>
             <span>checkpoint</span>
             <strong>{objective.checkpoint}</strong>
+          </div>
+          <div>
+            <span>echo shards</span>
+            <strong>
+              {objective.collectedEchoShards.length} / {ARRIVAL_ECHO_SHARDS.length}
+            </strong>
           </div>
           <div>
             <span>seed</span>

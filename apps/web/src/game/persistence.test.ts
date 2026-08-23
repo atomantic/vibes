@@ -11,6 +11,7 @@ const validSave: ArrivalSliceSave = {
   arrivalChimeActivated: false,
   loomAwakened: false,
   optionalVistaFound: false,
+  collectedEchoShards: ['tidepool'],
   checkpoint: 'shore',
 };
 

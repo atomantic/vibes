@@ -34,14 +34,20 @@ const test = base.extend<RuntimeErrorCapture>({
 
 async function openReadyWorld(page: Page): Promise<void> {
   await page.goto('/');
-  await page.waitForFunction(() => {
-    const hook = (
-      globalThis as typeof globalThis & {
-        __VIBES_TEST__?: VibesTestHook;
-      }
-    ).__VIBES_TEST__;
-    return hook?.ready === true;
-  });
+  // First boot compiles every WebGL program before the first frame, which can
+  // take tens of seconds on software renderers even though warm boots are fast.
+  await page.waitForFunction(
+    () => {
+      const hook = (
+        globalThis as typeof globalThis & {
+          __VIBES_TEST__?: VibesTestHook;
+        }
+      ).__VIBES_TEST__;
+      return hook?.ready === true;
+    },
+    undefined,
+    { timeout: 45_000 },
+  );
 
   await expect(page.getByRole('status')).toHaveText('World ready');
   await expect(page.locator("[data-testid='game-canvas']")).toBeVisible();

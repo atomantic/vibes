@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { InputButton } from '@vibes/protocol';
-import type { InputFrame, InteractionRequest } from '@vibes/protocol';
-import { ARRIVAL_SLICE_POSITIONS, ARRIVAL_SLICE_SEED } from '@vibes/world';
+import type { EchoShardKey, InputFrame, InteractionRequest } from '@vibes/protocol';
+import { ARRIVAL_ECHO_SHARDS, ARRIVAL_SLICE_POSITIONS, ARRIVAL_SLICE_SEED } from '@vibes/world';
 
 import {
   FIXED_TICK_RATE,
   GameSimulation,
+  GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND,
   JUMP_SPEED_METERS_PER_SECOND,
   RUN_SPEED_METERS_PER_SECOND,
 } from './index.js';
@@ -39,6 +40,51 @@ function playerPosition(simulation: GameSimulation): {
     y: position.y,
     z: position.cellZ * 64 + position.localZ,
   };
+}
+
+function loadRidgeSaveWithShards(
+  simulation: GameSimulation,
+  collectedEchoShards: readonly EchoShardKey[],
+): void {
+  simulation.loadSave({
+    schemaVersion: 1,
+    worldSeed: ARRIVAL_SLICE_SEED,
+    arrivalChimeActivated: true,
+    loomAwakened: false,
+    optionalVistaFound: false,
+    collectedEchoShards: [...collectedEchoShards],
+    checkpoint: 'ridge',
+  });
+}
+
+function walkToLoom(simulation: GameSimulation): number {
+  let sequence = 1;
+  while (sequence <= FIXED_TICK_RATE * 12) {
+    const position = playerPosition(simulation);
+    if (Math.hypot(position.x, position.z) < 1.5) break;
+    const jumpPulse = simulation.grounded ? InputButton.Jump : 0;
+    simulation.step(
+      frame(sequence, {
+        moveZ: 1,
+        buttons: InputButton.Sprint | jumpPulse,
+      }),
+    );
+    sequence += 1;
+  }
+  const final = playerPosition(simulation);
+  expect(Math.hypot(final.x, final.z), 'walkToLoom must reach the Loom').toBeLessThan(2.5);
+  return sequence;
+}
+
+function fallTicks(simulation: GameSimulation, ticks: number, holdJump: boolean): number[] {
+  const verticalVelocities: number[] = [];
+  for (let sequence = 1; sequence <= ticks; sequence += 1) {
+    verticalVelocities.push(
+      simulation.step(frame(sequence, { buttons: holdJump ? InputButton.Jump : 0 })).snapshot
+        .entities[0]?.velocity[1] ?? Number.NaN,
+    );
+  }
+  return verticalVelocities;
 }
 
 describe('GameSimulation', () => {
@@ -164,10 +210,10 @@ describe('GameSimulation', () => {
       const queued = simulation.step(frame(11, { buttons: InputButton.Jump }));
       expect(queued.snapshot.entities[0]?.velocity[1]).toBeLessThanOrEqual(0);
       let launchedVelocity = Number.NEGATIVE_INFINITY;
-      for (let sequence = 12; sequence <= 15; sequence += 1) {
+      for (let sequence = 12; sequence <= 30; sequence += 1) {
         launchedVelocity =
-          simulation.step(frame(sequence, { buttons: InputButton.Jump })).snapshot.entities[0]
-            ?.velocity[1] ?? Number.NEGATIVE_INFINITY;
+          simulation.step(frame(sequence)).snapshot.entities[0]?.velocity[1] ??
+          Number.NEGATIVE_INFINITY;
         if (launchedVelocity > 0) break;
       }
       expect(launchedVelocity).toBeGreaterThan(0);
@@ -203,7 +249,7 @@ describe('GameSimulation', () => {
     }
   });
 
-  it('awakens the Loom, advances its checkpoint, and produces a round-trippable save', () => {
+  it('awakens the Loom once every Echo Shard resonates, and round-trips a save', () => {
     const locked = GameSimulation.create({ initialPosition: ARRIVAL_SLICE_POSITIONS.loom });
     try {
       expect(locked.step(frame(1, { buttons: InputButton.Interact })).events).toEqual([]);
@@ -213,30 +259,10 @@ describe('GameSimulation', () => {
 
     const simulation = GameSimulation.create();
     try {
-      simulation.loadSave({
-        schemaVersion: 1,
-        worldSeed: ARRIVAL_SLICE_SEED,
-        arrivalChimeActivated: true,
-        loomAwakened: false,
-        optionalVistaFound: false,
-        checkpoint: 'ridge',
-      });
-      let sequence = 1;
-      while (sequence <= FIXED_TICK_RATE * 12) {
-        const position = playerPosition(simulation);
-        if (Math.hypot(position.x, position.z) < 1.5) break;
-        const jumpPulse = simulation.grounded ? InputButton.Jump : 0;
-        simulation.step(
-          frame(sequence, {
-            moveZ: 1,
-            buttons: InputButton.Sprint | jumpPulse,
-          }),
-        );
-        sequence += 1;
-      }
+      loadRidgeSaveWithShards(simulation, ['tidepool', 'ledge', 'pond']);
+      const sequence = walkToLoom(simulation);
       simulation.step(frame(sequence));
-      sequence += 1;
-      const result = simulation.step(frame(sequence, { buttons: InputButton.Interact }));
+      const result = simulation.step(frame(sequence + 1, { buttons: InputButton.Interact }));
       const save = simulation.save();
 
       expect(result.events.map(({ eventType }) => eventType)).toEqual([
@@ -247,6 +273,7 @@ describe('GameSimulation', () => {
         schemaVersion: 1,
         worldSeed: ARRIVAL_SLICE_SEED,
         loomAwakened: true,
+        collectedEchoShards: ['tidepool', 'ledge', 'pond'],
         checkpoint: 'loom',
       });
 
@@ -254,11 +281,17 @@ describe('GameSimulation', () => {
       try {
         const restoredSnapshot = restored.loadSave(save);
         expect(restoredSnapshot.objective.loomAwakened).toBe(true);
+        expect(restoredSnapshot.objective.collectedEchoShards).toEqual([
+          'tidepool',
+          'ledge',
+          'pond',
+        ]);
         expect(restoredSnapshot.objective.checkpoint).toBe('loom');
         restored.reset();
         expect(restored.snapshot().objective).toMatchObject({
           arrivalChimeActivated: false,
           loomAwakened: false,
+          collectedEchoShards: [],
           checkpoint: 'shore',
         });
       } finally {
@@ -267,6 +300,114 @@ describe('GameSimulation', () => {
     } finally {
       simulation.dispose();
     }
+  });
+
+  it('keeps the Loom asleep until the third Echo Shard is recovered', () => {
+    const simulation = GameSimulation.create();
+    try {
+      loadRidgeSaveWithShards(simulation, ['pond']);
+      const sequence = walkToLoom(simulation);
+      simulation.step(frame(sequence));
+      const partial = simulation.step(frame(sequence + 1, { buttons: InputButton.Interact }));
+      expect(partial.events).toEqual([]);
+      expect(partial.snapshot.objective.loomAwakened).toBe(false);
+
+      loadRidgeSaveWithShards(simulation, ['tidepool', 'ledge']);
+      const secondSequence = walkToLoom(simulation);
+      simulation.step(frame(secondSequence));
+      const stillLocked = simulation.step(
+        frame(secondSequence + 1, { buttons: InputButton.Interact }),
+      );
+      expect(stillLocked.events).toEqual([]);
+    } finally {
+      simulation.dispose();
+    }
+  });
+
+  it.each(ARRIVAL_ECHO_SHARDS.map((shard) => [shard.key, shard.position] as const))(
+    'collects the $0 Echo Shard by resonance once and never twice',
+    (_key, position) => {
+      const simulation = GameSimulation.create({ initialPosition: position });
+      try {
+        const collected = simulation.step(frame(1));
+        const echoEvents = collected.events.filter(
+          ({ eventType }) => eventType === 'echo-shard-collected',
+        );
+        expect(echoEvents).toHaveLength(1);
+        const echoEvent = echoEvents[0];
+        expect(echoEvent).toBeDefined();
+        if (echoEvent === undefined) return;
+        expect(echoEvent.entityId).toBe(`collectible.echo-shard.${_key}`);
+        expect(echoEvent.payload['collectedCount']).toBe(1);
+        expect(collected.snapshot.objective.collectedEchoShards).toEqual([_key]);
+
+        const held = simulation.step(frame(2));
+        expect(held.events.filter(({ eventType }) => eventType === 'echo-shard-collected')).toEqual(
+          [],
+        );
+        expect(held.snapshot.objective.collectedEchoShards).toEqual([_key]);
+        expect(simulation.save().collectedEchoShards).toEqual([_key]);
+      } finally {
+        simulation.dispose();
+      }
+    },
+  );
+
+  it('glides while Jump is held after the apex and releases when it is let go', () => {
+    const gliding = GameSimulation.create({
+      initialPosition: { ...ARRIVAL_SLICE_POSITIONS.arrivalSpawn, y: 24 },
+    });
+    const falling = GameSimulation.create({
+      initialPosition: { ...ARRIVAL_SLICE_POSITIONS.arrivalSpawn, y: 24 },
+    });
+    try {
+      const glideVelocities = fallTicks(gliding, 30, true);
+      const fallVelocities = fallTicks(falling, 30, false);
+
+      const lateGlideVelocities = glideVelocities.slice(-6);
+      expect(lateGlideVelocities.every((velocity) => velocity <= 0)).toBe(true);
+      expect(
+        Math.max(...lateGlideVelocities.map((velocity) => Math.abs(velocity))),
+      ).toBeLessThanOrEqual(GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND + 1e-6);
+      const lateFallVelocity = fallVelocities.at(-3);
+      expect(lateFallVelocity).toBeLessThan(-8);
+      expect(lateGlideVelocities[0]).toBeGreaterThan(lateFallVelocity ?? Number.NaN);
+
+      const released = gliding.step(frame(31));
+      expect(released.snapshot.entities[0]?.velocity[1]).toBeLessThan(
+        -GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND,
+      );
+
+      const landedY = playerPosition(gliding).y;
+      expect(landedY).toBeGreaterThan(playerPosition(falling).y - 0.001);
+    } finally {
+      gliding.dispose();
+      falling.dispose();
+    }
+  });
+
+  it('carries forward momentum farther while gliding than while free-falling', () => {
+    const glideDistanceFrom = (holdJump: boolean): number => {
+      const simulation = GameSimulation.create({
+        initialPosition: { ...ARRIVAL_SLICE_POSITIONS.arrivalSpawn, y: 24 },
+      });
+      try {
+        for (let sequence = 1; sequence <= 40; sequence += 1) {
+          simulation.step(
+            frame(sequence, {
+              moveZ: 1,
+              lookYaw: 0,
+              buttons: (holdJump ? InputButton.Jump : 0) | InputButton.Sprint,
+            }),
+          );
+        }
+        const position = playerPosition(simulation);
+        return ARRIVAL_SLICE_POSITIONS.arrivalSpawn.z - position.z;
+      } finally {
+        simulation.dispose();
+      }
+    };
+    expect(glideDistanceFrom(true)).toBeGreaterThan(glideDistanceFrom(false) * 1.05);
   });
 
   it('records the ridge checkpoint once and respawns there', () => {
@@ -416,16 +557,18 @@ describe('GameSimulation', () => {
     }
   });
 
-  it('emits the vista event, accepts an omitted input, and recovers out of bounds', () => {
+  it('emits the vista event with its Echo Shard, accepts an omitted input, and recovers out of bounds', () => {
     const vista = GameSimulation.create({
       initialPosition: ARRIVAL_SLICE_POSITIONS.optionalVista,
     });
     try {
       const result = vista.step();
-      expect(result.events).toEqual([
-        expect.objectContaining({ eventType: 'optional-vista-found' }),
+      expect(result.events.map(({ eventType }) => eventType)).toEqual([
+        'optional-vista-found',
+        'echo-shard-collected',
       ]);
       expect(result.snapshot.objective.optionalVistaFound).toBe(true);
+      expect(result.snapshot.objective.collectedEchoShards).toEqual(['tidepool']);
     } finally {
       vista.dispose();
     }

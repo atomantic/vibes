@@ -10,6 +10,7 @@ import type {
   WorldPosition,
 } from '@vibes/protocol';
 import {
+  ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE,
   ARRIVAL_SLICE_IDS,
   ARRIVAL_SLICE_POSITIONS,
@@ -21,8 +22,12 @@ import { createPhysicsWorld } from './physicsWorld.js';
 import { SimulationCheckpointSchema } from './checkpointSchema.js';
 import {
   COYOTE_TICKS,
+  ECHO_SHARD_RADIUS_METERS,
   FIXED_STEP_SECONDS,
   FIXED_TICK_RATE,
+  GLIDE_ENGAGE_FALL_SPEED_METERS_PER_SECOND,
+  GLIDE_FORWARD_BOOST,
+  GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND,
   JUMP_BUFFER_TICKS,
   JUMP_SPEED_METERS_PER_SECOND,
   PLAYER_CAPSULE_RADIUS,
@@ -106,7 +111,7 @@ function copyInput(input: InputFrame): InputFrame {
 }
 
 function copyObjective(objective: ObjectiveSnapshot): ObjectiveSnapshot {
-  return { ...objective };
+  return { ...objective, collectedEchoShards: [...objective.collectedEchoShards] };
 }
 
 function isUint32(value: number): boolean {
@@ -246,6 +251,7 @@ export class GameSimulation {
     crossingRaised: false,
     loomAwakened: false,
     optionalVistaFound: false,
+    collectedEchoShards: [],
     checkpoint: 'shore',
   };
 
@@ -314,16 +320,42 @@ export class GameSimulation {
       this.jumpBufferedUntilTick = -1;
     }
 
+    // Holding Jump after the apex opens the glide: the fall slows to a gentle
+    // terminal speed and steering gains a forward push, so high routes become
+    // rewarding launch pads instead of long drops.
+    const jumpHeld = (buttons & InputButton.Jump) !== 0;
+    const gliding =
+      !this.groundedValue &&
+      jumpHeld &&
+      verticalVelocity < GLIDE_ENGAGE_FALL_SPEED_METERS_PER_SECOND;
+    const steerBoost = gliding ? GLIDE_FORWARD_BOOST : 1;
+
     this.playerBody.setLinvel(
       {
-        x: desiredVelocity.x,
+        x: desiredVelocity.x * steerBoost,
         y: verticalVelocity,
-        z: desiredVelocity.z,
+        z: desiredVelocity.z * steerBoost,
       },
       true,
     );
     this.world.step();
     this.updateGroundedState();
+
+    // The glide terminal speed is enforced on the post-step velocity so the
+    // published snapshot never reports a faster fall than the glide allows.
+    if (gliding && !this.groundedValue) {
+      const settledVelocity = this.playerBody.linvel();
+      if (settledVelocity.y < -GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND) {
+        this.playerBody.setLinvel(
+          {
+            x: settledVelocity.x,
+            y: -GLIDE_TERMINAL_FALL_SPEED_METERS_PER_SECOND,
+            z: settledVelocity.z,
+          },
+          true,
+        );
+      }
+    }
 
     if (this.isInsideCrossingFailureVolume()) {
       this.teleportTo(checkpointPosition(ARRIVAL_SLICE.content.crossing.failureRecoveryCheckpoint));
@@ -392,6 +424,7 @@ export class GameSimulation {
       arrivalChimeActivated: this.objective.arrivalChimeActivated,
       loomAwakened: this.objective.loomAwakened,
       optionalVistaFound: this.objective.optionalVistaFound,
+      collectedEchoShards: [...this.objective.collectedEchoShards],
       checkpoint: this.objective.checkpoint,
     };
     return this.bestArrivalTimeMs === undefined
@@ -415,6 +448,7 @@ export class GameSimulation {
       crossingRaised: result.data.arrivalChimeActivated,
       loomAwakened: result.data.loomAwakened,
       optionalVistaFound: result.data.optionalVistaFound,
+      collectedEchoShards: [...result.data.collectedEchoShards],
       checkpoint: result.data.checkpoint,
     };
     this.bestArrivalTimeMs = result.data.bestArrivalTimeMs;
@@ -440,6 +474,7 @@ export class GameSimulation {
       crossingRaised: false,
       loomAwakened: false,
       optionalVistaFound: false,
+      collectedEchoShards: [],
       checkpoint: 'shore',
     };
     this.setCrossingRaised(false);
@@ -594,6 +629,26 @@ export class GameSimulation {
       );
     }
 
+    // Shards resonate in fixed definition order so concurrent pickups produce
+    // deterministic event sequences across replays.
+    for (const shard of ARRIVAL_ECHO_SHARDS) {
+      if (this.objective.collectedEchoShards.includes(shard.key)) continue;
+      if (
+        distanceSquared(position, shard.position) >
+        ECHO_SHARD_RADIUS_METERS * ECHO_SHARD_RADIUS_METERS
+      ) {
+        continue;
+      }
+      const collectedEchoShards = [...this.objective.collectedEchoShards, shard.key];
+      this.objective = { ...this.objective, collectedEchoShards };
+      events.push(
+        this.createEvent('echo-shard-collected', shard.id, {
+          echoShardKey: shard.key,
+          collectedCount: collectedEchoShards.length,
+        }),
+      );
+    }
+
     if (
       this.objective.checkpoint === 'shore' &&
       distanceSquared(position, ARRIVAL_SLICE_POSITIONS.revealRidge) <=
@@ -629,7 +684,8 @@ export class GameSimulation {
   private isInteractionEligible(interaction: InteractionDescriptor): boolean {
     if (
       interaction.persistentStateKey === 'loomAwakened' &&
-      !this.objective.arrivalChimeActivated
+      (!this.objective.arrivalChimeActivated ||
+        this.objective.collectedEchoShards.length < ARRIVAL_ECHO_SHARDS.length)
     ) {
       return false;
     }

@@ -7,12 +7,16 @@ export default defineConfig({
   testDir: './tests/browser',
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
-  retries: 0,
+  // Strict in CI; one local retry absorbs software-GL timing variance.
+  retries: process.env.CI ? 0 : 1,
   // WebGL browser processes contend for the same GPU when projects run in parallel.
   workers: 1,
-  timeout: 60_000,
+  // Software-GL machines spend tens of seconds compiling shaders on first
+  // boot and render single-digit FPS afterwards, so the infrastructure
+  // budgets below tolerate slow hardware even though warm CI runs finish fast.
+  timeout: 180_000,
   expect: {
-    timeout: 10_000,
+    timeout: 20_000,
   },
   reporter: process.env.CI
     ? [['line'], ['html', { open: 'never' }]]
@@ -21,7 +25,7 @@ export default defineConfig({
     baseURL: previewUrl,
     locale: 'en-US',
     timezoneId: 'UTC',
-    actionTimeout: 10_000,
+    actionTimeout: 20_000,
     navigationTimeout: 15_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

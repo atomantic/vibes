@@ -328,6 +328,21 @@ kbd {
   font-size: 0.57rem;
 }
 
+.objective-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.journey-timer {
+  color: rgba(214, 244, 234, 0.82);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
 .objective-card h1 {
   margin: 0;
   color: #f5f3e9;
@@ -366,6 +381,30 @@ kbd {
   box-shadow: 0 0 9px rgba(99, 242, 219, 0.3);
 }
 
+.shard-tracker {
+  display: flex;
+  margin-top: 12px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.shard-chip {
+  padding: 3px 8px 2px;
+  border: 1px solid rgba(173, 235, 220, 0.22);
+  border-radius: 3px 9px 3px 9px;
+  color: rgba(196, 219, 212, 0.55);
+  font-size: 0.56rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.shard-chip.collected {
+  border-color: color-mix(in srgb, var(--shard-accent, var(--resonance)) 65%, transparent);
+  color: var(--shard-accent, var(--resonance));
+  text-shadow: 0 0 8px color-mix(in srgb, var(--shard-accent, var(--resonance)) 55%, transparent);
+}
+
 .landmark-compass {
   position: absolute;
   z-index: 4;
@@ -374,6 +413,7 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 4px;
   color: rgba(239, 248, 241, 0.86);
   font-size: 0.55rem;
   font-weight: 800;
@@ -382,11 +422,13 @@ kbd {
   transform: translateX(-50%);
 }
 
-.loom-glyph {
-  color: var(--resonance);
-  font-size: 1.4rem;
-  line-height: 1;
-  text-shadow: 0 0 12px var(--resonance);
+.compass-needle {
+  width: 11px;
+  height: 11px;
+  background: var(--resonance);
+  clip-path: polygon(50% 0%, 100% 100%, 50% 74%, 0% 100%);
+  filter: drop-shadow(0 0 6px var(--resonance));
+  transform: rotate(var(--compass-bearing, 0deg));
 }
 
 .crosshair {
@@ -420,6 +462,12 @@ kbd {
   box-shadow: 0 10px 34px rgba(1, 13, 18, 0.4);
   transform: translateX(-50%);
   animation: prompt-pulse 2.2s ease-in-out infinite;
+}
+
+.interaction-prompt.hint {
+  border-color: rgba(214, 197, 141, 0.4);
+  color: rgba(240, 236, 216, 0.92);
+  animation: none;
 }
 
 .control-hint {
@@ -535,6 +583,86 @@ kbd {
 
 .text-button:hover {
   color: #ffb4a6;
+}
+
+.celebration-card {
+  position: absolute;
+  z-index: 7;
+  right: 30px;
+  bottom: 92px;
+  width: min(340px, calc(100vw - 48px));
+  padding: 20px 22px 14px;
+  border: 1px solid rgba(243, 181, 98, 0.4);
+  border-radius: 5px 20px 5px 20px;
+  background: var(--glass-strong);
+  backdrop-filter: blur(24px) saturate(120%);
+  box-shadow:
+    0 25px 80px rgba(1, 10, 14, 0.66),
+    0 0 46px rgba(243, 181, 98, 0.12);
+  animation: card-arrive 700ms cubic-bezier(0.18, 0.8, 0.22, 1) both;
+}
+
+.celebration-card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 26px;
+  width: 70px;
+  height: 2px;
+  background: linear-gradient(90deg, #f3b562, transparent);
+  box-shadow: 0 0 12px #f3b562;
+}
+
+.celebration-card h2 {
+  margin: 0;
+  color: #ffe9c4;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.5rem;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+}
+
+.celebration-card p {
+  margin: 10px 0 12px;
+  color: #d0ddd7;
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.celebration-stats {
+  display: flex;
+  margin: 0 0 6px;
+  gap: 8px;
+}
+
+.celebration-stats div {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid rgba(173, 235, 220, 0.16);
+  border-radius: 4px 10px 4px 10px;
+  background: rgba(6, 24, 30, 0.6);
+}
+
+.celebration-stats dt {
+  color: #8ca49e;
+  font-size: 0.52rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.celebration-stats dd {
+  margin: 3px 0 0;
+  color: #ffe9c4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.text-button.compact {
+  width: auto;
+  margin-top: 4px;
+  padding: 8px 10px;
 }
 
 .diagnostics {
@@ -686,6 +814,11 @@ kbd {
     top: 184px;
   }
 
+  .celebration-card {
+    right: 16px;
+    bottom: 84px;
+  }
+
   .control-hint {
     right: 16px;
     bottom: 16px;
@@ -736,12 +869,18 @@ kbd {
   .arrival-card,
   .objective-card,
   .pause-panel,
+  .celebration-card,
   .diagnostics,
   .world-status {
     border: 2px solid CanvasText;
     background: Canvas;
     color: CanvasText;
     backdrop-filter: none;
+  }
+
+  .compass-needle {
+    background: CanvasText;
+    filter: none;
   }
 
   .primary-button {
