@@ -13,11 +13,15 @@ import type {
   SimulationReady,
   SimulationSnapshot,
 } from '@vibes/protocol';
+import { WORLD_CELL_SIZE } from '@vibes/protocol';
 
 import { SynthAudio } from './game/audio/SynthAudio';
 import { GameView } from './game/GameView';
 import { persistArrivalSave, readArrivalSave } from './game/persistence';
 import type { RenderMetrics } from './game/render/ThreeRenderer';
+import type { AuthorityTransport } from './game/session/AuthorityTransport';
+import { LocalWorkerTransport } from './game/session/LocalWorkerTransport';
+import { readPlayerSettings, SETTINGS_KEY, type PlayerSettings } from './settings';
 
 interface PlayerPosition {
   readonly x: number;
@@ -25,14 +29,6 @@ interface PlayerPosition {
   readonly z: number;
 }
 
-interface PlayerSettings {
-  readonly reducedMotion: boolean;
-  readonly cameraSensitivity: number;
-  readonly uiScale: number;
-  readonly soundMuted: boolean;
-}
-
-const SETTINGS_KEY = 'vibes.player-settings.v1';
 const GAME_CONTROLS_DESCRIPTION_ID = 'game-control-instructions';
 
 const DEFAULT_OBJECTIVE: ObjectiveSnapshot = {
@@ -44,38 +40,12 @@ const DEFAULT_OBJECTIVE: ObjectiveSnapshot = {
   checkpoint: 'shore',
 };
 
-function readSettings(): PlayerSettings {
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_KEY);
-    if (raw === null) {
-      return {
-        reducedMotion: prefersReducedMotion,
-        cameraSensitivity: 1,
-        uiScale: 1,
-        soundMuted: false,
-      };
-    }
-    const value = JSON.parse(raw) as Partial<PlayerSettings>;
-    return {
-      reducedMotion:
-        typeof value.reducedMotion === 'boolean' ? value.reducedMotion : prefersReducedMotion,
-      cameraSensitivity:
-        typeof value.cameraSensitivity === 'number'
-          ? Math.min(2, Math.max(0.35, value.cameraSensitivity))
-          : 1,
-      uiScale:
-        typeof value.uiScale === 'number' ? Math.min(1.35, Math.max(0.85, value.uiScale)) : 1,
-      soundMuted: value.soundMuted === true,
-    };
-  } catch {
-    return {
-      reducedMotion: prefersReducedMotion,
-      cameraSensitivity: 1,
-      uiScale: 1,
-      soundMuted: false,
-    };
+function applyCompassBearing(compass: HTMLDivElement, bearingDegrees: number | null): void {
+  if (bearingDegrees === null) {
+    compass.style.removeProperty('--compass-bearing');
+    return;
   }
+  compass.style.setProperty('--compass-bearing', `${bearingDegrees.toFixed(1)}deg`);
 }
 
 function distanceTo(position: PlayerPosition, target: PlayerPosition): number {
@@ -119,7 +89,7 @@ export function App(): React.JSX.Element {
   const [started, setStarted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
-  const [settings, setSettings] = useState<PlayerSettings>(readSettings);
+  const [settings, setSettings] = useState<PlayerSettings>(readPlayerSettings);
   const [objective, setObjective] = useState<ObjectiveSnapshot>(DEFAULT_OBJECTIVE);
   const [position, setPosition] = useState<PlayerPosition>({
     x: ARRIVAL_SLICE_POSITIONS.arrivalSpawn.x,
@@ -155,6 +125,8 @@ export function App(): React.JSX.Element {
   const audioRef = useRef<SynthAudio | null>(null);
   const pauseResumeButtonRef = useRef<HTMLButtonElement>(null);
   const fatalRetryButtonRef = useRef<HTMLButtonElement>(null);
+  const compassRef = useRef<HTMLDivElement>(null);
+  const pendingCompassBearingRef = useRef<number | null>(null);
   const announcementTimeoutRef = useRef<number | undefined>(undefined);
   const progressStatusTimeoutRef = useRef<number | undefined>(undefined);
   const announcementEventRef = useRef<{ readonly tick: number; readonly priority: number } | null>(
@@ -178,15 +150,33 @@ export function App(): React.JSX.Element {
     }, 5_000);
   }, []);
 
+  const createTransport = useCallback((): AuthorityTransport => new LocalWorkerTransport(), []);
+
+  const handleCompassBearingChange = useCallback((bearingDegrees: number | null): void => {
+    pendingCompassBearingRef.current = bearingDegrees;
+    const compass = compassRef.current;
+    if (compass === null) return;
+    applyCompassBearing(compass, bearingDegrees);
+  }, []);
+
+  const setCompassRef = useCallback((compass: HTMLDivElement | null): void => {
+    compassRef.current = compass;
+    if (compass !== null) applyCompassBearing(compass, pendingCompassBearingRef.current);
+  }, []);
+
   const beginJourney = useCallback((): void => {
     if (audioRef.current === null) {
       const audio = new SynthAudio();
       audio.setMuted(settings.soundMuted);
-      audio.unlock();
-      audio.startAmbient();
       audioRef.current = audio;
+      void audio.unlock().then(() => {
+        audio.startAmbient();
+      });
     } else {
-      audioRef.current.unlock();
+      const audio = audioRef.current;
+      void audio.unlock().then(() => {
+        audio.startAmbient();
+      });
     }
     setStarted(true);
     setPaused(false);
@@ -348,9 +338,9 @@ export function App(): React.JSX.Element {
       const player = snapshot.entities[0];
       if (player !== undefined) {
         setPosition({
-          x: player.position.cellX * 64 + player.position.localX,
+          x: player.position.cellX * WORLD_CELL_SIZE + player.position.localX,
           y: player.position.y,
-          z: player.position.cellZ * 64 + player.position.localZ,
+          z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
         });
       }
 
@@ -510,12 +500,14 @@ export function App(): React.JSX.Element {
         reducedMotion={settings.reducedMotion}
         cameraSensitivity={settings.cameraSensitivity}
         resetSequence={resetSequence}
+        createTransport={createTransport}
         onReady={handleReady}
         onSnapshot={handleSnapshot}
         onDurableEvent={handleDurableEvent}
         onError={handleError}
         onMetrics={setMetrics}
         onPauseRequest={handlePauseRequest}
+        onCompassBearingChange={handleCompassBearingChange}
       />
 
       <p id={GAME_CONTROLS_DESCRIPTION_ID} className="screen-reader-only">
@@ -602,7 +594,7 @@ export function App(): React.JSX.Element {
             </div>
           </section>
 
-          <div className="landmark-compass" aria-label="The Loom lies ahead">
+          <div ref={setCompassRef} className="landmark-compass" aria-label="The Loom lies ahead">
             <span className="compass-needle" aria-hidden="true" />
             <span>THE LOOM</span>
           </div>

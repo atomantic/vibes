@@ -177,6 +177,13 @@ test('loads the production world and advances the simulation', async ({ page }) 
   );
 
   await page.keyboard.press('Enter');
+  await expect
+    .poll(() =>
+      page.locator('.landmark-compass').evaluate((element) => {
+        return (element as HTMLElement).style.getPropertyValue('--compass-bearing');
+      }),
+    )
+    .not.toBe('');
   await canvas.click();
   await page.waitForFunction(() => {
     const hook = (

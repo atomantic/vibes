@@ -1,5 +1,5 @@
 import * as RAPIER from '@dimforge/rapier3d/rapier.js';
-import { ArrivalSliceSaveSchema, InputButton } from '@vibes/protocol';
+import { ArrivalSliceSaveSchema, InputButton, WORLD_CELL_SIZE } from '@vibes/protocol';
 import type {
   ArrivalSliceSave,
   DurableEvent,
@@ -35,7 +35,6 @@ import {
   PLAYER_STANDING_HALF_HEIGHT,
   RUN_SPEED_METERS_PER_SECOND,
   SPRINT_SPEED_METERS_PER_SECOND,
-  WORLD_CELL_SIZE_METERS,
 } from './simulationConstants.js';
 import type {
   ArrivalCheckpoint,
@@ -176,14 +175,14 @@ function playerCenterAt(position: Vec3): Vec3 {
 }
 
 function worldPosition(coordinateX: number, y: number, coordinateZ: number): WorldPosition {
-  const cellX = Math.floor((coordinateX + WORLD_CELL_SIZE_METERS / 2) / WORLD_CELL_SIZE_METERS);
-  const cellZ = Math.floor((coordinateZ + WORLD_CELL_SIZE_METERS / 2) / WORLD_CELL_SIZE_METERS);
+  const cellX = Math.floor((coordinateX + WORLD_CELL_SIZE / 2) / WORLD_CELL_SIZE);
+  const cellZ = Math.floor((coordinateZ + WORLD_CELL_SIZE / 2) / WORLD_CELL_SIZE);
   return {
     cellX,
     cellZ,
-    localX: coordinateX - cellX * WORLD_CELL_SIZE_METERS,
+    localX: coordinateX - cellX * WORLD_CELL_SIZE,
     y,
-    localZ: coordinateZ - cellZ * WORLD_CELL_SIZE_METERS,
+    localZ: coordinateZ - cellZ * WORLD_CELL_SIZE,
   };
 }
 

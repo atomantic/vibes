@@ -10,9 +10,10 @@ import {
 import { KeyboardInput } from './input/KeyboardInput';
 import { readArrivalSave } from './persistence';
 import type { RenderMetrics, ThreeRenderer as ThreeRendererInstance } from './render/ThreeRenderer';
-import { LocalWorkerTransport } from './session/LocalWorkerTransport';
+import type { AuthorityTransport } from './session/AuthorityTransport';
 
 const INPUT_INTERVAL_SECONDS = 1 / 30;
+const TEST_HOOKS_ENABLED = import.meta.env.MODE === 'e2e';
 
 export interface GameViewProps {
   readonly active: boolean;
@@ -20,12 +21,14 @@ export interface GameViewProps {
   readonly reducedMotion: boolean;
   readonly cameraSensitivity: number;
   readonly resetSequence: number;
+  readonly createTransport: () => AuthorityTransport;
   readonly onReady: (ready: SimulationReady) => void;
   readonly onSnapshot: (snapshot: SimulationSnapshot) => void;
   readonly onDurableEvent: (event: DurableEvent) => void;
   readonly onError: (error: SimulationError) => void;
   readonly onMetrics: (metrics: RenderMetrics) => void;
   readonly onPauseRequest: () => void;
+  readonly onCompassBearingChange: (bearingDegrees: number | null) => void;
 }
 
 export function GameView({
@@ -34,15 +37,17 @@ export function GameView({
   reducedMotion,
   cameraSensitivity,
   resetSequence,
+  createTransport,
   onReady,
   onSnapshot,
   onDurableEvent,
   onError,
   onMetrics,
   onPauseRequest,
+  onCompassBearingChange,
 }: GameViewProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
-  const transportRef = useRef<LocalWorkerTransport | null>(null);
+  const transportRef = useRef<AuthorityTransport | null>(null);
   const inputRef = useRef<KeyboardInput | null>(null);
   const resetSequenceRef = useRef(resetSequence);
 
@@ -51,24 +56,28 @@ export function GameView({
     paused,
     reducedMotion,
     cameraSensitivity,
+    createTransport,
     onReady,
     onSnapshot,
     onDurableEvent,
     onError,
     onMetrics,
     onPauseRequest,
+    onCompassBearingChange,
   });
   currentProps.current = {
     active,
     paused,
     reducedMotion,
     cameraSensitivity,
+    createTransport,
     onReady,
     onSnapshot,
     onDurableEvent,
     onError,
     onMetrics,
     onPauseRequest,
+    onCompassBearingChange,
   };
 
   useEffect(() => {
@@ -77,7 +86,7 @@ export function GameView({
 
     let renderer: ThreeRendererInstance | null = null;
     let input: KeyboardInput | null = null;
-    let transport: LocalWorkerTransport | null = null;
+    let transport: AuthorityTransport | null = null;
     let testHook: VibesTestHook | undefined;
     let unsubscribeSnapshot: (() => void) | null = null;
     let unsubscribeEvent: (() => void) | null = null;
@@ -146,13 +155,15 @@ export function GameView({
 
       const camera = input.camera;
       renderer.render(deltaSeconds, elapsedSeconds, camera, props.reducedMotion);
-      const hook = window.__VIBES_TEST__;
-      if (hook !== undefined) {
-        hook.camera = { ...camera };
-        hook.frames += 1;
-        hook.contextLost = renderer.contextLost;
-        hook.paused = props.paused;
-        hook.avatar = renderer.avatarDiagnostics;
+      if (TEST_HOOKS_ENABLED) {
+        const hook = window.__VIBES_TEST__;
+        if (hook !== undefined) {
+          hook.camera = { ...camera };
+          hook.frames += 1;
+          hook.contextLost = renderer.contextLost;
+          hook.paused = props.paused;
+          hook.avatar = renderer.avatarDiagnostics;
+        }
       }
 
       const metrics = renderer.metrics;
@@ -177,18 +188,21 @@ export function GameView({
       input?.detach();
       transport?.dispose();
       renderer?.dispose();
+      currentProps.current.onCompassBearingChange(null);
       if (transportRef.current === transport) transportRef.current = null;
       if (inputRef.current === input) inputRef.current = null;
-      if (window.__VIBES_TEST__ === testHook) delete window.__VIBES_TEST__;
+      if (TEST_HOOKS_ENABLED && testHook !== undefined && window.__VIBES_TEST__ === testHook) {
+        delete window.__VIBES_TEST__;
+      }
     };
 
     const initialize = async (): Promise<void> => {
       try {
         const { ThreeRenderer } = await import('./render/ThreeRenderer');
         if (cancelled) return;
-        renderer = new ThreeRenderer(container);
+        renderer = new ThreeRenderer(container, currentProps.current.onCompassBearingChange);
         input = new KeyboardInput();
-        transport = new LocalWorkerTransport();
+        transport = currentProps.current.createTransport();
 
         input.attach(renderer.canvas);
         input.setSensitivityMultiplier(currentProps.current.cameraSensitivity);
@@ -196,21 +210,23 @@ export function GameView({
         transportRef.current = transport;
         inputRef.current = input;
 
-        testHook = {
-          ready: false,
-          tick: 0,
-          position: { x: 0, y: 0, z: 0 },
-          yaw: 0,
-          camera: { yaw: 0, pitch: -0.24 },
-          setCamera: (yaw, pitch) => {
-            input?.setCamera(yaw, pitch);
-          },
-          frames: 0,
-          contextLost: false,
-          paused: currentProps.current.paused,
-          avatar: renderer.avatarDiagnostics,
-        };
-        window.__VIBES_TEST__ = testHook;
+        if (TEST_HOOKS_ENABLED) {
+          testHook = {
+            ready: false,
+            tick: 0,
+            position: { x: 0, y: 0, z: 0 },
+            yaw: 0,
+            camera: { yaw: 0, pitch: -0.24 },
+            setCamera: (yaw, pitch) => {
+              input?.setCamera(yaw, pitch);
+            },
+            frames: 0,
+            contextLost: false,
+            paused: currentProps.current.paused,
+            avatar: renderer.avatarDiagnostics,
+          };
+          window.__VIBES_TEST__ = testHook;
+        }
 
         document.addEventListener('pointerlockchange', onPointerLockChange);
         document.addEventListener('visibilitychange', onVisibilityChange);
@@ -220,6 +236,7 @@ export function GameView({
           latestSnapshot = snapshot;
           renderer?.setSnapshot(snapshot);
           currentProps.current.onSnapshot(snapshot);
+          if (!TEST_HOOKS_ENABLED) return;
           const hook = window.__VIBES_TEST__;
           if (hook === undefined) return;
 
@@ -249,8 +266,10 @@ export function GameView({
             if (save === undefined) transport.resetWorld();
             else transport.loadSave(save);
             transport.setPaused(!currentProps.current.active || currentProps.current.paused);
-            const hook = window.__VIBES_TEST__;
-            if (hook !== undefined) hook.ready = true;
+            if (TEST_HOOKS_ENABLED) {
+              const hook = window.__VIBES_TEST__;
+              if (hook !== undefined) hook.ready = true;
+            }
             currentProps.current.onReady(ready);
           })
           .catch((error: unknown) => {
@@ -275,8 +294,10 @@ export function GameView({
   useEffect(() => {
     transportRef.current?.setPaused(!active || paused);
     inputRef.current?.setEnabled(active && !paused);
-    const hook = window.__VIBES_TEST__;
-    if (hook !== undefined) hook.paused = paused;
+    if (TEST_HOOKS_ENABLED) {
+      const hook = window.__VIBES_TEST__;
+      if (hook !== undefined) hook.paused = paused;
+    }
   }, [active, paused]);
 
   useEffect(() => {

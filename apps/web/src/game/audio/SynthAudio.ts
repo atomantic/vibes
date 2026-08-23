@@ -25,23 +25,32 @@ export class SynthAudio {
   #master: GainNode | null = null;
   #muted = false;
   #disposed = false;
+  #ambientStarted = false;
 
-  unlock(): void {
-    if (this.#disposed || this.#context !== null) return;
-    const ContextConstructor = resolveAudioContextConstructor();
-    if (ContextConstructor === null) return;
+  async unlock(): Promise<void> {
+    if (this.#disposed) return;
+    if (this.#context === null) {
+      const ContextConstructor = resolveAudioContextConstructor();
+      if (ContextConstructor === null) return;
+      try {
+        this.#context = new ContextConstructor();
+        this.#master = this.#context.createGain();
+        this.#master.gain.value = this.#muted ? 0 : MASTER_GAIN;
+        this.#master.connect(this.#context.destination);
+      } catch {
+        this.#context = null;
+        this.#master = null;
+        return;
+      }
+    }
+
+    const context = this.#context;
+    if (context.state === 'running') return;
     try {
-      this.#context = new ContextConstructor();
-      this.#master = this.#context.createGain();
-      this.#master.gain.value = this.#muted ? 0 : MASTER_GAIN;
-      this.#master.connect(this.#context.destination);
-      void this.#context.resume().catch(() => {
-        // Autoplay policies may hold the context suspended until a later
-        // gesture; the next unlock attempt resumes it.
-      });
+      await context.resume();
     } catch {
-      this.#context = null;
-      this.#master = null;
+      // Autoplay policies may hold the context suspended until a later
+      // gesture; a later unlock attempt can retry the resume.
     }
   }
 
@@ -58,7 +67,8 @@ export class SynthAudio {
   startAmbient(): void {
     const context = this.#context;
     const master = this.#master;
-    if (context === null || master === null || context.state !== 'running') return;
+    if (this.#ambientStarted || context === null || master === null || context.state !== 'running')
+      return;
 
     const ambientGain = context.createGain();
     ambientGain.gain.value = AMBIENT_GAIN;
@@ -102,6 +112,7 @@ export class SynthAudio {
     wind.connect(windFilter).connect(windGain).connect(master);
     wind.start();
     windLfo.start();
+    this.#ambientStarted = true;
   }
 
   playChimeActivation(): void {
@@ -128,6 +139,7 @@ export class SynthAudio {
     });
     this.#context = null;
     this.#master = null;
+    this.#ambientStarted = false;
   }
 
   #playBell(frequencyHertz: number, durationSeconds: number, level = 0.14): void {

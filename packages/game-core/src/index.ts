@@ -16,8 +16,8 @@ export {
   RUN_SPEED_METERS_PER_SECOND,
   SIMULATION_TICK_RATE,
   SPRINT_SPEED_METERS_PER_SECOND,
-  WORLD_CELL_SIZE_METERS,
 } from './simulationConstants.js';
+export { WORLD_CELL_SIZE, WORLD_CELL_SIZE as WORLD_CELL_SIZE_METERS } from '@vibes/protocol';
 export type {
   ArrivalCheckpoint,
   ArrivalSliceSave,

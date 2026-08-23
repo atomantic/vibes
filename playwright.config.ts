@@ -56,7 +56,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm build && pnpm preview',
+    command: 'pnpm --filter @vibes/web run build --mode e2e && pnpm preview',
     url: previewUrl,
     // Never validate a stale Vibes bundle (or an unrelated process) that was
     // already listening on the preview port.

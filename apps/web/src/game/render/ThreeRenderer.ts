@@ -72,7 +72,7 @@ import {
   type VisualGeneratorDescriptor,
   type Vec3,
 } from '@vibes/world';
-import type { ObjectiveSnapshot, SimulationSnapshot } from '@vibes/protocol';
+import { WORLD_CELL_SIZE, type ObjectiveSnapshot, type SimulationSnapshot } from '@vibes/protocol';
 
 import { selectAvatarAnimation, type AvatarAnimationState } from './avatarAnimation';
 import type { RobotAvatar } from './RobotAvatar';
@@ -84,6 +84,7 @@ import {
   createStylizedWaterMaterial,
   createStylizedWaterState,
 } from './StylizedEnvironment';
+import { newlyCollectedEchoShards } from './shardVisibility';
 
 export interface RenderMetrics {
   readonly fps: number;
@@ -173,6 +174,10 @@ interface SilhouetteGeneratorContext {
 
 type SilhouetteGenerator = (context: SilhouetteGeneratorContext) => void;
 
+function ignoreCompassBearingChange(bearingDegrees: number | null): void {
+  void bearingDegrees;
+}
+
 export class ThreeRenderer {
   readonly canvas: HTMLCanvasElement;
   readonly #renderer: WebGLRenderer;
@@ -218,6 +223,7 @@ export class ThreeRenderer {
   #lastCompassBearingDegrees = Number.NaN;
   #resizeObserver: ResizeObserver | null = null;
   readonly #container: HTMLElement;
+  readonly #onCompassBearingChange: (bearingDegrees: number | null) => void;
 
   #objective: ObjectiveSnapshot = {
     arrivalChimeActivated: false,
@@ -268,9 +274,13 @@ export class ThreeRenderer {
     },
   };
 
-  constructor(container: HTMLElement) {
+  constructor(
+    container: HTMLElement,
+    onCompassBearingChange: (bearingDegrees: number | null) => void = ignoreCompassBearingChange,
+  ) {
     this.#container = container;
     assertValidArrivalSliceDefinition();
+    this.#onCompassBearingChange = onCompassBearingChange;
     this.#renderer = new WebGLRenderer({
       antialias: true,
       alpha: false,
@@ -347,9 +357,9 @@ export class ThreeRenderer {
     const player = snapshot.entities[0];
     if (player !== undefined) {
       this.#avatarTarget.set(
-        player.position.cellX * 64 + player.position.localX,
+        player.position.cellX * WORLD_CELL_SIZE + player.position.localX,
         player.position.y,
-        player.position.cellZ * 64 + player.position.localZ,
+        player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
       );
       this.#playerVelocity.set(...player.velocity);
       this.#playerYaw = player.yaw;
@@ -375,33 +385,28 @@ export class ThreeRenderer {
     }
 
     const collected = snapshot.objective.collectedEchoShards;
-    if (!this.#shardsInitialized) {
-      this.#shardsInitialized = true;
-      this.#collectedEchoShards = collected;
-      for (const [key, group] of this.#echoShardGroups) {
-        group.visible = !collected.includes(key);
-      }
-    } else if (collected.length !== this.#collectedEchoShards.length) {
-      for (const key of collected) {
-        if (this.#collectedEchoShards.includes(key)) continue;
-        const shard = ARRIVAL_ECHO_SHARDS.find(({ key: shardKey }) => shardKey === key);
-        const group = this.#echoShardGroups.get(key);
-        if (group === undefined) continue;
-        group.visible = false;
-        if (shard !== undefined) {
-          this.#spawnBurst(shard.position, new Color(shard.accentColor));
-          if (key === 'pond') {
-            addStylizedWaterRipple(
-              this.#waterState,
-              shard.position.x,
-              shard.position.z,
-              this.#waterTime.value,
-            );
-          }
+    const newlyCollected = this.#shardsInitialized
+      ? newlyCollectedEchoShards(this.#collectedEchoShards, collected)
+      : [];
+    for (const [key, group] of this.#echoShardGroups) {
+      group.visible = !collected.includes(key);
+    }
+    for (const key of newlyCollected) {
+      const shard = ARRIVAL_ECHO_SHARDS.find(({ key: shardKey }) => shardKey === key);
+      if (shard !== undefined) {
+        this.#spawnBurst(shard.position, new Color(shard.accentColor));
+        if (key === 'pond') {
+          addStylizedWaterRipple(
+            this.#waterState,
+            shard.position.x,
+            shard.position.z,
+            this.#waterTime.value,
+          );
         }
       }
-      this.#collectedEchoShards = collected;
     }
+    this.#shardsInitialized = true;
+    this.#collectedEchoShards = [...collected];
   }
 
   render(
@@ -506,12 +511,12 @@ export class ThreeRenderer {
         ((camera.yaw + Math.PI - bearingToLoom) * 180) / Math.PI + 180,
         360,
       ) - 180;
-    if (Math.abs(screenBearingDegrees - this.#lastCompassBearingDegrees) > 0.5) {
+    if (
+      Number.isNaN(this.#lastCompassBearingDegrees) ||
+      Math.abs(screenBearingDegrees - this.#lastCompassBearingDegrees) > 0.5
+    ) {
       this.#lastCompassBearingDegrees = screenBearingDegrees;
-      document.documentElement.style.setProperty(
-        '--compass-bearing',
-        `${screenBearingDegrees.toFixed(1)}deg`,
-      );
+      this.#onCompassBearingChange(screenBearingDegrees);
     }
 
     const avatarTerrainHeight = arrivalTerrainHeight(
@@ -565,6 +570,7 @@ export class ThreeRenderer {
       }
     });
     this.#renderer.dispose();
+    this.#onCompassBearingChange(null);
     this.canvas.remove();
   }
 
