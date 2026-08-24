@@ -4,9 +4,12 @@ import {
   Color,
   DoubleSide,
   FrontSide,
+  Group,
   InstancedMesh,
+  Material,
   Matrix4,
   MeshStandardMaterial,
+  type Object3D,
   Quaternion,
   ShaderMaterial,
   Vector2,
@@ -119,6 +122,129 @@ export function addStylizedWaterRipple(
   state.nextRippleIndex = (index + 1) % MAX_WATER_RIPPLES;
 }
 
+export type EnvironmentLodTier = 'near' | 'far';
+
+export interface EnvironmentLodPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface DistanceTierEnvironmentOptions {
+  readonly center: EnvironmentLodPoint;
+  readonly near: Object3D;
+  readonly far: Object3D;
+  /** Switch from the reduced representation back to the near representation. */
+  readonly nearDistance: number;
+  /** Switch from the near representation to the reduced representation. */
+  readonly farDistance: number;
+}
+
+export interface DistanceTierEnvironment {
+  readonly group: Group;
+  readonly activeTier: EnvironmentLodTier;
+  update(cameraPosition: EnvironmentLodPoint): EnvironmentLodTier;
+  rebuild(near: Object3D, far: Object3D): void;
+  dispose(): void;
+}
+
+export function disposeEnvironmentObject(object: Object3D): void {
+  object.traverse((child) => {
+    if (child instanceof InstancedMesh) child.dispose();
+    const renderable = child as unknown as {
+      readonly geometry?: unknown;
+      readonly material?: unknown;
+    };
+    if (renderable.geometry instanceof BufferGeometry) renderable.geometry.dispose();
+    if (Array.isArray(renderable.material)) {
+      for (const material of renderable.material) {
+        if (material instanceof Material) material.dispose();
+      }
+    } else if (renderable.material instanceof Material) {
+      renderable.material.dispose();
+    }
+  });
+}
+
+export function createDistanceTierEnvironment(
+  options: DistanceTierEnvironmentOptions,
+): DistanceTierEnvironment {
+  if (
+    !Number.isFinite(options.nearDistance) ||
+    !Number.isFinite(options.farDistance) ||
+    options.nearDistance < 0 ||
+    options.farDistance <= options.nearDistance
+  ) {
+    throw new Error('Environment LOD distances must be finite and ordered near < far.');
+  }
+
+  const group = new Group();
+  const center = { ...options.center };
+  let near = options.near;
+  let far = options.far;
+  let activeTier: EnvironmentLodTier = 'near';
+  let lastCameraPosition: EnvironmentLodPoint | null = null;
+  let disposed = false;
+
+  const syncVisibility = (): void => {
+    near.visible = activeTier === 'near';
+    far.visible = activeTier === 'far';
+  };
+
+  const attachRepresentations = (): void => {
+    group.add(near, far);
+    syncVisibility();
+  };
+
+  const updateTier = (cameraPosition: EnvironmentLodPoint): void => {
+    const distance = Math.hypot(
+      cameraPosition.x - center.x,
+      cameraPosition.y - center.y,
+      cameraPosition.z - center.z,
+    );
+    if (activeTier === 'near' && distance >= options.farDistance) {
+      activeTier = 'far';
+      syncVisibility();
+    } else if (activeTier === 'far' && distance <= options.nearDistance) {
+      activeTier = 'near';
+      syncVisibility();
+    }
+  };
+
+  attachRepresentations();
+
+  return {
+    group,
+    get activeTier(): EnvironmentLodTier {
+      return activeTier;
+    },
+    update(cameraPosition): EnvironmentLodTier {
+      if (disposed) return activeTier;
+      lastCameraPosition = { ...cameraPosition };
+      updateTier(cameraPosition);
+      return activeTier;
+    },
+    rebuild(nextNear, nextFar): void {
+      if (disposed) return;
+      group.remove(near, far);
+      disposeEnvironmentObject(near);
+      disposeEnvironmentObject(far);
+      near = nextNear;
+      far = nextFar;
+      activeTier = 'near';
+      if (lastCameraPosition !== null) updateTier(lastCameraPosition);
+      attachRepresentations();
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      group.remove(near, far);
+      disposeEnvironmentObject(near);
+      disposeEnvironmentObject(far);
+    },
+  };
+}
+
 export interface GrassFieldOptions {
   readonly count: number;
   readonly time: IUniform<number>;
@@ -132,6 +258,12 @@ export interface GrassFieldOptions {
     readonly excludeRadiusX?: number;
     readonly excludeRadiusZ?: number;
     readonly edgeSoftness?: number;
+  };
+  readonly bounds?: {
+    readonly minX: number;
+    readonly maxX: number;
+    readonly minZ: number;
+    readonly maxZ: number;
   };
   readonly clearPath?: boolean;
   readonly minTerrainHeight?: number;
@@ -321,6 +453,9 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
         );
         if (excludedDistance < 1) continue;
       }
+    } else if (options.bounds) {
+      x = options.bounds.minX + options.random() * (options.bounds.maxX - options.bounds.minX);
+      z = options.bounds.minZ + options.random() * (options.bounds.maxZ - options.bounds.minZ);
     } else {
       x = (options.random() - 0.5) * 150;
       z = -8 + options.random() * 142;
