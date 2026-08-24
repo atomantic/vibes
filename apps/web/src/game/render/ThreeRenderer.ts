@@ -1327,10 +1327,7 @@ export class ThreeRenderer {
     });
   }
 
-  #buildBackdropMeadow(
-    meadowRandom: () => number,
-    launchGrassRandom: () => number,
-  ): void {
+  #buildBackdropMeadow(meadowRandom: () => number, launchGrassRandom: () => number): void {
     const grass = createStylizedGrassField({
       count: 11_000,
       time: this.#waterTime,
