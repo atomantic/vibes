@@ -22,7 +22,6 @@ import {
   IcosahedronGeometry,
   InstancedMesh,
   type IUniform,
-  Material,
   MathUtils,
   Matrix4,
   Mesh,
@@ -70,11 +69,15 @@ import { selectAvatarAnimation, type AvatarAnimationState } from './avatarAnimat
 import type { RobotAvatar } from './RobotAvatar';
 import {
   addStylizedWaterRipple,
+  createDistanceTierEnvironment,
+  disposeEnvironmentObject,
   createStylizedGrassField,
   createStylizedSeabedMaterial,
   createStylizedTerrainMaterial,
   createStylizedWaterMaterial,
   createStylizedWaterState,
+  type DistanceTierEnvironment,
+  type EnvironmentLodTier,
 } from './StylizedEnvironment';
 
 export interface RenderMetrics {
@@ -82,6 +85,7 @@ export interface RenderMetrics {
   readonly frameTimeMs: number;
   readonly drawCalls: number;
   readonly triangles: number;
+  readonly environmentLod: EnvironmentLodMetric;
 }
 
 export interface AvatarDiagnostics {
@@ -154,6 +158,212 @@ function lerpAngle(current: number, target: number, alpha: number): number {
   return current + shortestDelta * alpha;
 }
 
+interface EnvironmentScatterCounts {
+  readonly rocks: number;
+  readonly grass: number;
+  readonly launchGrass: number;
+  readonly coral: number;
+}
+
+export type EnvironmentLodMetric = EnvironmentLodTier | 'mixed';
+
+interface ScatterZBounds {
+  readonly minZ: number;
+  readonly maxZ: number;
+}
+
+interface EnvironmentScatterRegion {
+  readonly center: { readonly x: number; readonly y: number; readonly z: number };
+  readonly grassZ: ScatterZBounds;
+  readonly rockZ: ScatterZBounds;
+  readonly near: EnvironmentScatterCounts;
+  readonly far: EnvironmentScatterCounts;
+  readonly seedSalt: number;
+  readonly nearDistance: number;
+  readonly farDistance: number;
+}
+
+const ENVIRONMENT_SCATTER_REGIONS: readonly EnvironmentScatterRegion[] = [
+  {
+    center: { x: 0, y: 8, z: 8.5 },
+    grassZ: { minZ: -8, maxZ: 25 },
+    rockZ: { minZ: -15, maxZ: 25 },
+    near: { rocks: 24, grass: 2_500, launchGrass: 0, coral: 0 },
+    far: { rocks: 6, grass: 625, launchGrass: 0, coral: 0 },
+    seedSalt: 0x2a11,
+    nearDistance: 28,
+    farDistance: 36,
+  },
+  {
+    center: { x: 0, y: 8, z: 50 },
+    grassZ: { minZ: 25, maxZ: 75 },
+    rockZ: { minZ: 25, maxZ: 75 },
+    near: { rocks: 32, grass: 4_000, launchGrass: 0, coral: 0 },
+    far: { rocks: 8, grass: 1_000, launchGrass: 0, coral: 0 },
+    seedSalt: 0x4b22,
+    nearDistance: 28,
+    farDistance: 36,
+  },
+  {
+    center: { x: 11, y: 5, z: 104 },
+    grassZ: { minZ: 75, maxZ: 134 },
+    rockZ: { minZ: 75, maxZ: 135 },
+    near: { rocks: 40, grass: 4_500, launchGrass: 53_000, coral: 72 },
+    far: { rocks: 10, grass: 1_125, launchGrass: 13_250, coral: 18 },
+    seedSalt: 0x7d33,
+    nearDistance: 28,
+    farDistance: 36,
+  },
+];
+
+function createRockScatter(
+  count: number,
+  random: () => number,
+  zBounds: ScatterZBounds,
+): InstancedMesh {
+  const rockGeometry = new IcosahedronGeometry(1, 1);
+  const rockMaterial = new MeshStandardMaterial({ color: COLOR.rock, roughness: 0.96 });
+  const rocks = new InstancedMesh(rockGeometry, rockMaterial, count);
+  const transform = new Matrix4();
+  const rotation = new Quaternion();
+  const scale = new Vector3();
+  const position = new Vector3();
+  const up = new Vector3(0, 1, 0);
+
+  for (let index = 0; index < count; index += 1) {
+    let x = (random() - 0.5) * 154;
+    const z = zBounds.minZ + random() * (zBounds.maxZ - zBounds.minZ);
+    if (Math.abs(x) < 13) x += x < 0 ? -15 : 15;
+    const y = arrivalTerrainHeight(x, z);
+    position.set(x, y + 0.4, z);
+    rotation.setFromAxisAngle(up, random() * Math.PI * 2);
+    const size = 0.55 + random() * 2.1;
+    scale.set(size * (0.7 + random() * 0.7), size, size * (0.75 + random() * 0.5));
+    transform.compose(position, rotation, scale);
+    rocks.setMatrixAt(index, transform);
+  }
+  rocks.instanceMatrix.setUsage(DynamicDrawUsage);
+  rocks.castShadow = true;
+  rocks.receiveShadow = true;
+  rocks.computeBoundingBox();
+  rocks.computeBoundingSphere();
+  return rocks;
+}
+
+function createCoralScatter(count: number, random: () => number): InstancedMesh {
+  const coralGeometry = new ConeGeometry(0.22, 1.8, 5);
+  const coralMaterial = new MeshStandardMaterial({
+    color: COLOR.coral,
+    emissive: '#5e2e39',
+    emissiveIntensity: 0.22,
+    roughness: 0.75,
+  });
+  const coral = new InstancedMesh(coralGeometry, coralMaterial, count);
+  const transform = new Matrix4();
+  const rotation = new Quaternion();
+  const scale = new Vector3();
+  const position = new Vector3();
+  const up = new Vector3(0, 1, 0);
+
+  for (let index = 0; index < count; index += 1) {
+    let x = (random() - 0.5) * 88;
+    const z = 89 + random() * 43;
+    if (Math.abs(x) < 6) x += x < 0 ? -8 : 8;
+    const y = arrivalTerrainHeight(x, z);
+    const size = 0.55 + random() * 1.3;
+    position.set(x, y + size * 0.75, z);
+    rotation.setFromAxisAngle(up, random() * Math.PI * 2);
+    scale.set(size * 0.7, size, size * 0.7);
+    transform.compose(position, rotation, scale);
+    coral.setMatrixAt(index, transform);
+  }
+  coral.instanceMatrix.needsUpdate = true;
+  coral.computeBoundingBox();
+  coral.computeBoundingSphere();
+  return coral;
+}
+
+function createEnvironmentScatterRepresentation(
+  time: IUniform<number>,
+  counts: EnvironmentScatterCounts,
+  streamFor: (contentId: ScatterDescriptor['id']) => () => number,
+  region: EnvironmentScatterRegion,
+): Group {
+  const group = new Group();
+
+  if (counts.rocks > 0) {
+    group.add(
+      createRockScatter(
+        counts.rocks,
+        streamFor(ARRIVAL_SLICE_IDS.contentArrivalShoreRock),
+        region.rockZ,
+      ),
+    );
+  }
+  if (counts.grass > 0) {
+    group.add(
+      createStylizedGrassField({
+        count: counts.grass,
+        time,
+        heightAt: arrivalTerrainHeight,
+        random: streamFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrass),
+        bounds: {
+          minX: -75,
+          maxX: 75,
+          minZ: region.grassZ.minZ,
+          maxZ: region.grassZ.maxZ,
+        },
+      }),
+    );
+  }
+  if (counts.launchGrass > 0) {
+    group.add(
+      createStylizedGrassField({
+        count: counts.launchGrass,
+        time,
+        heightAt: arrivalTerrainHeight,
+        random: streamFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch),
+        placement: {
+          centerX: ARRIVAL_POND.centerX,
+          centerZ: ARRIVAL_POND.centerZ,
+          radiusX: 14,
+          radiusZ: 16,
+          excludeRadiusX: ARRIVAL_POND.radiusX * 0.78,
+          excludeRadiusZ: ARRIVAL_POND.radiusZ * 0.78,
+          edgeSoftness: 0.3,
+        },
+        clearPath: true,
+        minTerrainHeight: ARRIVAL_POND.bedY + 0.05,
+        maxTerrainHeight: 3,
+        minBladeHeight: 0.42,
+        maxBladeHeight: 0.92,
+        minBladeWidth: 0.05,
+        maxBladeWidth: 0.085,
+        dirtInfluence: 0.08,
+      }),
+    );
+  }
+  if (counts.coral > 0) {
+    group.add(
+      createCoralScatter(counts.coral, streamFor(ARRIVAL_SLICE_IDS.contentArrivalShoreCoral)),
+    );
+  }
+  return group;
+}
+
+function summarizeEnvironmentLod(
+  environments: readonly DistanceTierEnvironment[],
+): EnvironmentLodMetric {
+  let hasNear = false;
+  let hasFar = false;
+  for (const environment of environments) {
+    if (environment.activeTier === 'near') hasNear = true;
+    if (environment.activeTier === 'far') hasFar = true;
+  }
+  if (hasNear && hasFar) return 'mixed';
+  return hasFar ? 'far' : 'near';
+}
+
 export class ThreeRenderer {
   readonly canvas: HTMLCanvasElement;
   readonly #renderer: WebGLRenderer;
@@ -187,6 +397,7 @@ export class ThreeRenderer {
   readonly #hemisphere: HemisphereLight;
   readonly #echoShardGroups = new Map<EchoShardKey, Group>();
   readonly #echoShardBaseY = new Map<EchoShardKey, number>();
+  readonly #environmentLods: DistanceTierEnvironment[] = [];
   readonly #beaconHaloMaterial: MeshBasicMaterial;
   readonly #bursts: {
     readonly mesh: Mesh;
@@ -217,7 +428,14 @@ export class ThreeRenderer {
   #contextLost = false;
   #frameAccumulator = 0;
   #frameSamples = 0;
-  #metrics: RenderMetrics = { fps: 0, frameTimeMs: 0, drawCalls: 0, triangles: 0 };
+  #environmentLod: EnvironmentLodMetric = 'near';
+  #metrics: RenderMetrics = {
+    fps: 0,
+    frameTimeMs: 0,
+    drawCalls: 0,
+    triangles: 0,
+    environmentLod: 'near',
+  };
   #disposed = false;
   #nextWaterRippleTime = 0;
 
@@ -424,6 +642,8 @@ export class ThreeRenderer {
     this.#camera.position.lerp(this.#cameraDesired, 1 - Math.exp(-deltaSeconds * 9));
     this.#camera.lookAt(this.#cameraTarget);
     this.#waterState.cameraXZ.value.set(this.#camera.position.x, this.#camera.position.z);
+    for (const environment of this.#environmentLods) environment.update(this.#camera.position);
+    this.#environmentLod = summarizeEnvironmentLod(this.#environmentLods);
 
     // Speed reads through a gentle field-of-view widen; gliding adds a little
     // more so soaring off the ridge feels faster than sprinting the path.
@@ -509,19 +729,10 @@ export class ThreeRenderer {
     this.canvas.removeEventListener('webglcontextlost', this.#onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.#onContextRestored);
     this.#robotAvatar?.dispose();
+    for (const environment of this.#environmentLods) environment.dispose();
+    this.#environmentLods.length = 0;
     this.#scene.traverse((object) => {
-      const renderable = object as unknown as {
-        readonly geometry?: unknown;
-        readonly material?: unknown;
-      };
-      if (renderable.geometry instanceof BufferGeometry) renderable.geometry.dispose();
-      if (Array.isArray(renderable.material)) {
-        for (const material of renderable.material) {
-          if (material instanceof Material) material.dispose();
-        }
-      } else if (renderable.material instanceof Material) {
-        renderable.material.dispose();
-      }
+      disposeEnvironmentObject(object);
     });
     this.#renderer.dispose();
     this.canvas.remove();
@@ -1085,94 +1296,45 @@ export class ThreeRenderer {
       }
       return descriptor;
     };
-    const streamFor = (contentId: ScatterDescriptor['id'], seedOffset: number): (() => number) =>
-      createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, contentId, seedOffset);
-    const rockDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreRock);
-    const grassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrass);
-    const launchGrassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch);
-    const coralDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreCoral);
-    const rockRandom = streamFor(rockDescriptor.id, rockDescriptor.seedOffset);
-    const grassRandom = streamFor(grassDescriptor.id, grassDescriptor.seedOffset);
-    const launchGrassRandom = streamFor(launchGrassDescriptor.id, launchGrassDescriptor.seedOffset);
-    const coralRandom = streamFor(coralDescriptor.id, coralDescriptor.seedOffset);
-    const rockGeometry = new IcosahedronGeometry(1, 1);
-    const rockMaterial = new MeshStandardMaterial({ color: COLOR.rock, roughness: 0.96 });
-    const rocks = new InstancedMesh(rockGeometry, rockMaterial, 96);
-    const transform = new Matrix4();
-    const rotation = new Quaternion();
-    const scale = new Vector3();
-    const position = new Vector3();
-    for (let index = 0; index < 96; index += 1) {
-      let x = (rockRandom() - 0.5) * 154;
-      const z = -15 + rockRandom() * 150;
-      if (Math.abs(x) < 13) x += x < 0 ? -15 : 15;
-      const y = arrivalTerrainHeight(x, z);
-      position.set(x, y + 0.4, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), rockRandom() * Math.PI * 2);
-      const size = 0.55 + rockRandom() * 2.1;
-      scale.set(size * (0.7 + rockRandom() * 0.7), size, size * (0.75 + rockRandom() * 0.5));
-      transform.compose(position, rotation, scale);
-      rocks.setMatrixAt(index, transform);
+    // Each scatter kind keeps its own stream (#1) so changing one descriptor's
+    // count cannot shift another's placement, and the region's salt keeps two
+    // regions from laying down the same pattern. The near and far tiers share a
+    // key on purpose: the far tier thins the same placements rather than
+    // inventing a second set the swap would visibly jump between.
+    const streamsFor =
+      (region: EnvironmentScatterRegion) =>
+      (id: ScatterDescriptor['id']): (() => number) => {
+        const descriptor = descriptorFor(id);
+        return createSeededRandomStream(
+          ARRIVAL_SLICE_DEFINITION.seed,
+          `${descriptor.id}#${region.seedSalt.toString(16)}`,
+          descriptor.seedOffset,
+        );
+      };
+    for (const region of ENVIRONMENT_SCATTER_REGIONS) {
+      const streamFor = streamsFor(region);
+      const near = createEnvironmentScatterRepresentation(
+        this.#waterTime,
+        region.near,
+        streamFor,
+        region,
+      );
+      const far = createEnvironmentScatterRepresentation(
+        this.#waterTime,
+        region.far,
+        streamFor,
+        region,
+      );
+      const environment = createDistanceTierEnvironment({
+        center: region.center,
+        near,
+        far,
+        nearDistance: region.nearDistance,
+        farDistance: region.farDistance,
+      });
+      this.#environmentLods.push(environment);
+      this.#scene.add(environment.group);
     }
-    rocks.instanceMatrix.setUsage(DynamicDrawUsage);
-    rocks.castShadow = true;
-    rocks.receiveShadow = true;
-    this.#scene.add(rocks);
-
-    const grass = createStylizedGrassField({
-      count: 11_000,
-      time: this.#waterTime,
-      heightAt: arrivalTerrainHeight,
-      random: grassRandom,
-    });
-    this.#scene.add(grass);
-
-    const launchGrass = createStylizedGrassField({
-      count: 53_000,
-      time: this.#waterTime,
-      heightAt: arrivalTerrainHeight,
-      random: launchGrassRandom,
-      placement: {
-        centerX: ARRIVAL_POND.centerX,
-        centerZ: ARRIVAL_POND.centerZ,
-        radiusX: 14,
-        radiusZ: 16,
-        excludeRadiusX: ARRIVAL_POND.radiusX * 0.78,
-        excludeRadiusZ: ARRIVAL_POND.radiusZ * 0.78,
-        edgeSoftness: 0.3,
-      },
-      clearPath: true,
-      minTerrainHeight: ARRIVAL_POND.bedY + 0.05,
-      maxTerrainHeight: 3,
-      minBladeHeight: 0.42,
-      maxBladeHeight: 0.92,
-      minBladeWidth: 0.05,
-      maxBladeWidth: 0.085,
-      dirtInfluence: 0.08,
-    });
-    this.#scene.add(launchGrass);
-
-    const coralGeometry = new ConeGeometry(0.22, 1.8, 5);
-    const coralMaterial = new MeshStandardMaterial({
-      color: COLOR.coral,
-      emissive: '#5e2e39',
-      emissiveIntensity: 0.22,
-      roughness: 0.75,
-    });
-    const coral = new InstancedMesh(coralGeometry, coralMaterial, 72);
-    for (let index = 0; index < 72; index += 1) {
-      let x = (coralRandom() - 0.5) * 88;
-      const z = 89 + coralRandom() * 43;
-      if (Math.abs(x) < 6) x += x < 0 ? -8 : 8;
-      const y = arrivalTerrainHeight(x, z);
-      const size = 0.55 + coralRandom() * 1.3;
-      position.set(x, y + size * 0.75, z);
-      rotation.setFromAxisAngle(new Vector3(0, 1, 0), coralRandom() * Math.PI * 2);
-      scale.set(size * 0.7, size, size * 0.7);
-      transform.compose(position, rotation, scale);
-      coral.setMatrixAt(index, transform);
-    }
-    this.#scene.add(coral);
   }
 
   #buildAvatar(): void {
@@ -1302,6 +1464,7 @@ export class ThreeRenderer {
       frameTimeMs: Math.round((this.#frameAccumulator / this.#frameSamples) * 10_000) / 10,
       drawCalls: this.#renderer.info.render.calls,
       triangles: this.#renderer.info.render.triangles,
+      environmentLod: this.#environmentLod,
     };
     this.#frameAccumulator = 0;
     this.#frameSamples = 0;

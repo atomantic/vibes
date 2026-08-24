@@ -132,6 +132,7 @@ export function App(): React.JSX.Element {
     frameTimeMs: 0,
     drawCalls: 0,
     triangles: 0,
+    environmentLod: 'near',
   });
   const [prompt, setPrompt] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
@@ -821,6 +822,10 @@ export function App(): React.JSX.Element {
           <div>
             <span>triangles</span>
             <strong>{metrics.triangles.toLocaleString()}</strong>
+          </div>
+          <div>
+            <span>scatter LOD</span>
+            <strong>{metrics.environmentLod}</strong>
           </div>
           <div>
             <span>position</span>
