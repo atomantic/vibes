@@ -4,9 +4,12 @@ import {
   Color,
   DoubleSide,
   FrontSide,
+  Group,
   InstancedMesh,
+  Material,
   Matrix4,
   MeshStandardMaterial,
+  type Object3D,
   Quaternion,
   ShaderMaterial,
   Vector2,
@@ -117,6 +120,213 @@ export function addStylizedWaterRipple(
   state.rippleTimes[index] = startTime;
   state.rippleCount.value = Math.min(state.rippleCount.value + 1, MAX_WATER_RIPPLES);
   state.nextRippleIndex = (index + 1) % MAX_WATER_RIPPLES;
+}
+
+export type EnvironmentLodTier = 'near' | 'far';
+
+export interface EnvironmentLodPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface DistanceTierEnvironmentOptions {
+  readonly center: EnvironmentLodPoint;
+  readonly near: Object3D;
+  readonly far: Object3D;
+  /** Switch from the reduced representation back to the near representation. */
+  readonly nearDistance: number;
+  /** Switch from the near representation to the reduced representation. */
+  readonly farDistance: number;
+}
+
+export interface DistanceTierEnvironment {
+  readonly group: Group;
+  readonly activeTier: EnvironmentLodTier;
+  update(cameraPosition: EnvironmentLodPoint): EnvironmentLodTier;
+  rebuild(near: Object3D, far: Object3D): void;
+  dispose(): void;
+}
+
+export function disposeEnvironmentObject(object: Object3D): void {
+  object.traverse((child) => {
+    if (child instanceof InstancedMesh) child.dispose();
+    const renderable = child as unknown as {
+      readonly geometry?: unknown;
+      readonly material?: unknown;
+    };
+    if (renderable.geometry instanceof BufferGeometry) renderable.geometry.dispose();
+    if (Array.isArray(renderable.material)) {
+      for (const material of renderable.material) {
+        if (material instanceof Material) material.dispose();
+      }
+    } else if (renderable.material instanceof Material) {
+      renderable.material.dispose();
+    }
+  });
+}
+
+export function createDistanceTierEnvironment(
+  options: DistanceTierEnvironmentOptions,
+): DistanceTierEnvironment {
+  if (
+    !Number.isFinite(options.nearDistance) ||
+    !Number.isFinite(options.farDistance) ||
+    options.nearDistance < 0 ||
+    options.farDistance <= options.nearDistance
+  ) {
+    throw new Error('Environment LOD distances must be finite and ordered near < far.');
+  }
+
+  const group = new Group();
+  const center = { ...options.center };
+  let near = options.near;
+  let far = options.far;
+  let activeTier: EnvironmentLodTier = 'near';
+  let lastCameraPosition: EnvironmentLodPoint | null = null;
+  let disposed = false;
+
+  const syncVisibility = (): void => {
+    near.visible = activeTier === 'near';
+    far.visible = activeTier === 'far';
+  };
+
+  const attachRepresentations = (): void => {
+    group.add(near, far);
+    syncVisibility();
+  };
+
+  const updateTier = (cameraPosition: EnvironmentLodPoint): void => {
+    const distance = Math.hypot(
+      cameraPosition.x - center.x,
+      cameraPosition.y - center.y,
+      cameraPosition.z - center.z,
+    );
+    if (activeTier === 'near' && distance >= options.farDistance) {
+      activeTier = 'far';
+      syncVisibility();
+    } else if (activeTier === 'far' && distance <= options.nearDistance) {
+      activeTier = 'near';
+      syncVisibility();
+    }
+  };
+
+  attachRepresentations();
+
+  return {
+    group,
+    get activeTier(): EnvironmentLodTier {
+      return activeTier;
+    },
+    update(cameraPosition): EnvironmentLodTier {
+      if (disposed) return activeTier;
+      lastCameraPosition = { ...cameraPosition };
+      updateTier(cameraPosition);
+      return activeTier;
+    },
+    rebuild(nextNear, nextFar): void {
+      if (disposed) return;
+      group.remove(near, far);
+      disposeEnvironmentObject(near);
+      disposeEnvironmentObject(far);
+      near = nextNear;
+      far = nextFar;
+      activeTier = 'near';
+      if (lastCameraPosition !== null) updateTier(lastCameraPosition);
+      attachRepresentations();
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      group.remove(near, far);
+      disposeEnvironmentObject(near);
+      disposeEnvironmentObject(far);
+    },
+  };
+}
+
+/** A z band of the world; instances with z below `maxZ` (and not in an earlier band) belong to it. */
+export interface ScatterBand {
+  readonly maxZ: number;
+}
+
+export interface PartitionedScatterBand {
+  readonly near: InstancedMesh;
+  readonly far: InstancedMesh;
+}
+
+/**
+ * Splits one instanced scatter into per-band near and far meshes. Bands are
+ * ordered by ascending `maxZ`; an instance past the last band's `maxZ` joins the
+ * last band, so no placement is ever dropped. The near mesh keeps every
+ * instance in the band and the far mesh every `farStride`th one, so a tier swap
+ * thins the same placements instead of jumping to a different set. A band with
+ * no instances yields `null`.
+ *
+ * The band meshes share the source geometry and material, and the source's own
+ * instance buffers are released, so the source must not be rendered afterwards.
+ */
+export function partitionInstancedScatter(
+  source: InstancedMesh,
+  bands: readonly ScatterBand[],
+  farStride: number,
+): (PartitionedScatterBand | null)[] {
+  if (bands.length === 0) throw new Error('Scatter partition needs at least one band.');
+  if (!Number.isInteger(farStride) || farStride < 1) {
+    throw new Error('Scatter far stride must be a positive integer.');
+  }
+  for (let index = 1; index < bands.length; index += 1) {
+    const previous = bands[index - 1];
+    const band = bands[index];
+    if (previous === undefined || band === undefined || !(band.maxZ > previous.maxZ)) {
+      throw new Error('Scatter bands must be ordered by ascending maxZ.');
+    }
+  }
+
+  const transform = new Matrix4();
+  const position = new Vector3();
+  const members: number[][] = bands.map(() => []);
+  for (let instance = 0; instance < source.count; instance += 1) {
+    source.getMatrixAt(instance, transform);
+    position.setFromMatrixPosition(transform);
+    let bandIndex = bands.findIndex((band) => position.z < band.maxZ);
+    if (bandIndex === -1) bandIndex = bands.length - 1;
+    members[bandIndex]?.push(instance);
+  }
+
+  const color = new Color();
+  const copyInstances = (indices: readonly number[], name: string): InstancedMesh => {
+    const mesh = new InstancedMesh(source.geometry, source.material, indices.length);
+    indices.forEach((sourceIndex, targetIndex) => {
+      source.getMatrixAt(sourceIndex, transform);
+      mesh.setMatrixAt(targetIndex, transform);
+      if (source.instanceColor !== null) {
+        source.getColorAt(sourceIndex, color);
+        mesh.setColorAt(targetIndex, color);
+      }
+    });
+    mesh.name = name;
+    mesh.castShadow = source.castShadow;
+    mesh.receiveShadow = source.receiveShadow;
+    mesh.frustumCulled = source.frustumCulled;
+    mesh.instanceMatrix.setUsage(source.instanceMatrix.usage);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingBox();
+    mesh.computeBoundingSphere();
+    return mesh;
+  };
+
+  const partitioned = members.map((indices, bandIndex) => {
+    if (indices.length === 0) return null;
+    const farIndices = indices.filter((_, order) => order % farStride === 0);
+    return {
+      near: copyInstances(indices, `${source.name}#${bandIndex.toString()}:near`),
+      far: copyInstances(farIndices, `${source.name}#${bandIndex.toString()}:far`),
+    };
+  });
+  source.dispose();
+  return partitioned;
 }
 
 export interface GrassFieldOptions {

@@ -22,7 +22,6 @@ import {
   IcosahedronGeometry,
   InstancedMesh,
   type IUniform,
-  Material,
   MathUtils,
   Matrix4,
   Mesh,
@@ -77,11 +76,17 @@ import { selectAvatarAnimation, type AvatarAnimationState } from './avatarAnimat
 import type { RobotAvatar } from './RobotAvatar';
 import {
   addStylizedWaterRipple,
+  createDistanceTierEnvironment,
+  disposeEnvironmentObject,
   createStylizedGrassField,
   createStylizedSeabedMaterial,
   createStylizedTerrainMaterial,
   createStylizedWaterMaterial,
   createStylizedWaterState,
+  partitionInstancedScatter,
+  type DistanceTierEnvironment,
+  type EnvironmentLodTier,
+  type ScatterBand,
 } from './StylizedEnvironment';
 import { newlyCollectedEchoShards } from './shardVisibility';
 
@@ -90,6 +95,7 @@ export interface RenderMetrics {
   readonly frameTimeMs: number;
   readonly drawCalls: number;
   readonly triangles: number;
+  readonly environmentLod: EnvironmentLodMetric;
 }
 
 export interface AvatarDiagnostics {
@@ -177,6 +183,47 @@ function ignoreCompassBearingChange(bearingDegrees: number | null): void {
   void bearingDegrees;
 }
 
+export type EnvironmentLodMetric = EnvironmentLodTier | 'mixed';
+
+interface EnvironmentScatterRegion extends ScatterBand {
+  readonly center: { readonly x: number; readonly y: number; readonly z: number };
+  readonly nearDistance: number;
+  readonly farDistance: number;
+}
+
+// The arrival slice is long in z, so one LOD center for the whole scatter would
+// flip every blade at once. Each region owns the instances of every scatter
+// descriptor that fall inside its z band and swaps on its own distance.
+const ENVIRONMENT_SCATTER_REGIONS: readonly EnvironmentScatterRegion[] = [
+  { maxZ: 25, center: { x: 0, y: 8, z: 8.5 }, nearDistance: 28, farDistance: 36 },
+  { maxZ: 75, center: { x: 0, y: 8, z: 50 }, nearDistance: 28, farDistance: 36 },
+  {
+    maxZ: Number.POSITIVE_INFINITY,
+    center: { x: ARRIVAL_POND.centerX, y: 5, z: ARRIVAL_POND.centerZ },
+    nearDistance: 28,
+    farDistance: 36,
+  },
+];
+// The far tier keeps every fourth placement of the near tier.
+const ENVIRONMENT_FAR_SCATTER_STRIDE = 4;
+
+function isInstancedMesh(object: Object3D): object is InstancedMesh {
+  return object instanceof InstancedMesh;
+}
+
+function summarizeEnvironmentLod(
+  environments: readonly DistanceTierEnvironment[],
+): EnvironmentLodMetric {
+  let hasNear = false;
+  let hasFar = false;
+  for (const environment of environments) {
+    if (environment.activeTier === 'near') hasNear = true;
+    if (environment.activeTier === 'far') hasFar = true;
+  }
+  if (hasNear && hasFar) return 'mixed';
+  return hasFar ? 'far' : 'near';
+}
+
 export class ThreeRenderer {
   readonly canvas: HTMLCanvasElement;
   readonly #renderer: WebGLRenderer;
@@ -210,6 +257,7 @@ export class ThreeRenderer {
   readonly #hemisphere: HemisphereLight;
   readonly #echoShardGroups = new Map<EchoShardKey, Group>();
   readonly #echoShardBaseY = new Map<EchoShardKey, number>();
+  readonly #environmentLods: DistanceTierEnvironment[] = [];
   readonly #beaconHaloMaterial: MeshBasicMaterial;
   readonly #bursts: {
     readonly mesh: Mesh;
@@ -241,7 +289,14 @@ export class ThreeRenderer {
   #contextLost = false;
   #frameAccumulator = 0;
   #frameSamples = 0;
-  #metrics: RenderMetrics = { fps: 0, frameTimeMs: 0, drawCalls: 0, triangles: 0 };
+  #environmentLod: EnvironmentLodMetric = 'near';
+  #metrics: RenderMetrics = {
+    fps: 0,
+    frameTimeMs: 0,
+    drawCalls: 0,
+    triangles: 0,
+    environmentLod: 'near',
+  };
   #disposed = false;
   #nextWaterRippleTime = 0;
   readonly #scatterGenerators: Readonly<Record<ScatterGeneratorId, ScatterGenerator>> = {
@@ -475,6 +530,8 @@ export class ThreeRenderer {
     this.#camera.position.lerp(this.#cameraDesired, 1 - Math.exp(-deltaSeconds * 9));
     this.#camera.lookAt(this.#cameraTarget);
     this.#waterState.cameraXZ.value.set(this.#camera.position.x, this.#camera.position.z);
+    for (const environment of this.#environmentLods) environment.update(this.#camera.position);
+    this.#environmentLod = summarizeEnvironmentLod(this.#environmentLods);
 
     // Speed reads through a gentle field-of-view widen; gliding adds a little
     // more so soaring off the ridge feels faster than sprinting the path.
@@ -560,19 +617,10 @@ export class ThreeRenderer {
     this.canvas.removeEventListener('webglcontextlost', this.#onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.#onContextRestored);
     this.#robotAvatar?.dispose();
+    for (const environment of this.#environmentLods) environment.dispose();
+    this.#environmentLods.length = 0;
     this.#scene.traverse((object) => {
-      const renderable = object as unknown as {
-        readonly geometry?: unknown;
-        readonly material?: unknown;
-      };
-      if (renderable.geometry instanceof BufferGeometry) renderable.geometry.dispose();
-      if (Array.isArray(renderable.material)) {
-        for (const material of renderable.material) {
-          if (material instanceof Material) material.dispose();
-        }
-      } else if (renderable.material instanceof Material) {
-        renderable.material.dispose();
-      }
+      disposeEnvironmentObject(object);
     });
     this.#renderer.dispose();
     this.#onCompassBearingChange(null);
@@ -1198,6 +1246,10 @@ export class ThreeRenderer {
     const registry: Readonly<Record<string, ScatterArchetypeDescriptor>> =
       ARRIVAL_SLICE_DEFINITION.visualArchetypes.scatter;
     const generators: Readonly<Record<string, ScatterGenerator>> = this.#scatterGenerators;
+    const regionTiers = ENVIRONMENT_SCATTER_REGIONS.map(() => ({
+      near: new Group(),
+      far: new Group(),
+    }));
     for (const descriptor of scatterDescriptors) {
       const archetype = registry[descriptor.archetype];
       if (archetype === undefined) {
@@ -1219,8 +1271,38 @@ export class ThreeRenderer {
         ),
       );
       visual.name = archetype.id;
-      this.#scene.add(visual);
+      if (!isInstancedMesh(visual)) {
+        this.#scene.add(visual);
+        continue;
+      }
+      // The near tier of each region keeps exactly the placements the generator
+      // produced; the far tier thins those same placements, so the swap never
+      // jumps to a second, unrelated set.
+      const bands = partitionInstancedScatter(
+        visual,
+        ENVIRONMENT_SCATTER_REGIONS,
+        ENVIRONMENT_FAR_SCATTER_STRIDE,
+      );
+      bands.forEach((band, index) => {
+        const tiers = regionTiers[index];
+        if (band === null || tiers === undefined) return;
+        tiers.near.add(band.near);
+        tiers.far.add(band.far);
+      });
     }
+    ENVIRONMENT_SCATTER_REGIONS.forEach((region, index) => {
+      const tiers = regionTiers[index];
+      if (tiers === undefined) return;
+      const environment = createDistanceTierEnvironment({
+        center: region.center,
+        near: tiers.near,
+        far: tiers.far,
+        nearDistance: region.nearDistance,
+        farDistance: region.farDistance,
+      });
+      this.#environmentLods.push(environment);
+      this.#scene.add(environment.group);
+    });
   }
 
   #createRockScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
@@ -1491,6 +1573,7 @@ export class ThreeRenderer {
       frameTimeMs: Math.round((this.#frameAccumulator / this.#frameSamples) * 10_000) / 10,
       drawCalls: this.#renderer.info.render.calls,
       triangles: this.#renderer.info.render.triangles,
+      environmentLod: this.#environmentLod,
     };
     this.#frameAccumulator = 0;
     this.#frameSamples = 0;
