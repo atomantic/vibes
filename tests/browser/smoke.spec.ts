@@ -253,6 +253,10 @@ test('loads the production world and advances the simulation', async ({ page }) 
   const facingZ = -Math.cos(moved.yaw);
 
   expect(moved.tick).toBeGreaterThan(settled.tick);
+  // Guard the divisor. A run that never moved divided into NaN below, which
+  // reports as a direction failure and hides the fact that the avatar simply
+  // did not travel.
+  expect(displacement).toBeGreaterThan(0.5);
   expect(
     (displacementX * cameraForwardX + displacementZ * cameraForwardZ) / displacement,
   ).toBeGreaterThan(0.85);
