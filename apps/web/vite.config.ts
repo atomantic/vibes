@@ -12,12 +12,17 @@ export default defineConfig({
     target: 'es2022',
   },
   server: {
+    host: '0.0.0.0',
+    // Tailscale MagicDNS addresses use the tailnet's *.ts.net suffix.
+    allowedHosts: ['.ts.net'],
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
   preview: {
+    host: '0.0.0.0',
+    allowedHosts: ['.ts.net'],
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
