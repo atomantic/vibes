@@ -124,6 +124,7 @@ export interface GrassFieldOptions {
   readonly time: IUniform<number>;
   readonly heightAt: (x: number, z: number) => number;
   readonly random: () => number;
+  readonly radiusMeters?: number;
   readonly placement?: {
     readonly centerX: number;
     readonly centerZ: number;
@@ -322,8 +323,9 @@ export function createStylizedGrassField(options: GrassFieldOptions): InstancedM
         if (excludedDistance < 1) continue;
       }
     } else {
-      x = (options.random() - 0.5) * 150;
-      z = -8 + options.random() * 142;
+      const diameterMeters = (options.radiusMeters ?? 75) * 2;
+      x = (options.random() - 0.5) * diameterMeters;
+      z = -8 + options.random() * (diameterMeters - 8);
     }
     const height = options.heightAt(x, z);
     const pathClearance = 5.5 + Math.sin(z * 0.075) * 2.2;

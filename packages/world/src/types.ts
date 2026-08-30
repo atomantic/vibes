@@ -69,10 +69,15 @@ export type ArrivalContentGeneratorId =
   | 'loom-ring-assembly'
   | 'distant-silhouette';
 
-export type ScatterArchetype = 'rock' | 'coral' | 'reed' | 'grass';
+export type ScatterArchetype = 'rock' | 'coral' | 'reed' | 'grass' | 'meadow' | 'launch-grass';
 
 export type ScatterGeneratorId =
-  'scatter-rock' | 'scatter-coral' | 'scatter-reed' | 'scatter-grass';
+  | 'scatter-rock'
+  | 'scatter-coral'
+  | 'scatter-reed'
+  | 'scatter-grass'
+  | 'scatter-meadow'
+  | 'scatter-launch-grass';
 
 export type SilhouetteGeneratorId =
   | 'silhouette-forest-basin'

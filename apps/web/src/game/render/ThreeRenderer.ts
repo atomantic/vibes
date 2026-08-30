@@ -51,7 +51,6 @@ import {
 import {
   ARRIVAL_ECHO_SHARDS,
   ARRIVAL_SLICE_DEFINITION,
-  ARRIVAL_SLICE_IDS,
   ARRIVAL_POND,
   ARRIVAL_SLICE_POSITIONS,
   ARRIVAL_TERRAIN_CELL_SIZE_METERS,
@@ -257,6 +256,12 @@ export class ThreeRenderer {
     },
     'scatter-grass': (descriptor, random) => {
       return this.#createGrassScatter(descriptor, random);
+    },
+    'scatter-meadow': (descriptor, random) => {
+      return this.#createMeadowScatter(descriptor, random);
+    },
+    'scatter-launch-grass': (descriptor, random) => {
+      return this.#createLaunchGrassScatter(descriptor, random);
     },
   };
   readonly #silhouetteGenerators: Readonly<Record<SilhouetteGeneratorId, SilhouetteGenerator>> = {
@@ -1190,23 +1195,10 @@ export class ThreeRenderer {
 
   #buildScatter(): void {
     const scatterDescriptors = ARRIVAL_SLICE_DEFINITION.content.arrivalShore.scatter;
-    const descriptorFor = (id: ScatterDescriptor['id']): ScatterDescriptor => {
-      const descriptor = scatterDescriptors.find((candidate) => candidate.id === id);
-      if (descriptor === undefined) {
-        throw new Error(`Missing Arrival Shore scatter descriptor for '${id}'.`);
-      }
-      return descriptor;
-    };
-    const streamFor = (contentId: ScatterDescriptor['id'], seedOffset: number): (() => number) =>
-      createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, contentId, seedOffset);
     const registry: Readonly<Record<string, ScatterArchetypeDescriptor>> =
       ARRIVAL_SLICE_DEFINITION.visualArchetypes.scatter;
     const generators: Readonly<Record<string, ScatterGenerator>> = this.#scatterGenerators;
-    // The launch-grass descriptor anchors the backdrop meadow rather than the
-    // instanced generators, so it is drawn below with its own stream.
-    const launchGrassDescriptor = descriptorFor(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch);
     for (const descriptor of scatterDescriptors) {
-      if (descriptor.id === launchGrassDescriptor.id) continue;
       const archetype = registry[descriptor.archetype];
       if (archetype === undefined) {
         throw new Error(`Unknown scatter archetype '${descriptor.archetype}'.`);
@@ -1218,16 +1210,17 @@ export class ThreeRenderer {
       // Each descriptor draws from its own stream (#1). Sharing one generator-
       // order-dependent stream made every scatter shift when any earlier one
       // changed its count.
-      const visual = generator(descriptor, streamFor(descriptor.id, descriptor.seedOffset));
+      const visual = generator(
+        descriptor,
+        createSeededRandomStream(
+          ARRIVAL_SLICE_DEFINITION.seed,
+          descriptor.id,
+          descriptor.seedOffset,
+        ),
+      );
       visual.name = archetype.id;
       this.#scene.add(visual);
     }
-    this.#buildBackdropMeadow(
-      // The backdrop meadow has no descriptor of its own, so it is anchored on a
-      // named stream rather than borrowing a descriptor's and correlating with it.
-      createSeededRandomStream(ARRIVAL_SLICE_DEFINITION.seed, 'backdrop.meadow', 0),
-      streamFor(launchGrassDescriptor.id, launchGrassDescriptor.seedOffset),
-    );
   }
 
   #createRockScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
@@ -1333,26 +1326,29 @@ export class ThreeRenderer {
     });
   }
 
-  #buildBackdropMeadow(meadowRandom: () => number, launchGrassRandom: () => number): void {
-    const grass = createStylizedGrassField({
-      count: 11_000,
+  #createMeadowScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
+    return createStylizedGrassField({
+      count: descriptor.count,
       time: this.#waterTime,
       heightAt: arrivalTerrainHeight,
-      random: meadowRandom,
+      random,
+      radiusMeters: descriptor.radiusMeters,
+      minBladeHeight: descriptor.minimumScale,
+      maxBladeHeight: descriptor.maximumScale,
     });
-    grass.name = 'backdrop.meadow';
-    this.#scene.add(grass);
+  }
 
-    const launchGrass = createStylizedGrassField({
-      count: 53_000,
+  #createLaunchGrassScatter(descriptor: ScatterDescriptor, random: () => number): InstancedMesh {
+    return createStylizedGrassField({
+      count: descriptor.count,
       time: this.#waterTime,
       heightAt: arrivalTerrainHeight,
-      random: launchGrassRandom,
+      random,
       placement: {
         centerX: ARRIVAL_POND.centerX,
         centerZ: ARRIVAL_POND.centerZ,
-        radiusX: 14,
-        radiusZ: 16,
+        radiusX: descriptor.radiusMeters * 0.875,
+        radiusZ: descriptor.radiusMeters,
         excludeRadiusX: ARRIVAL_POND.radiusX * 0.78,
         excludeRadiusZ: ARRIVAL_POND.radiusZ * 0.78,
         edgeSoftness: 0.3,
@@ -1360,14 +1356,12 @@ export class ThreeRenderer {
       clearPath: true,
       minTerrainHeight: ARRIVAL_POND.bedY + 0.05,
       maxTerrainHeight: 3,
-      minBladeHeight: 0.42,
-      maxBladeHeight: 0.92,
+      minBladeHeight: descriptor.minimumScale,
+      maxBladeHeight: descriptor.maximumScale,
       minBladeWidth: 0.05,
       maxBladeWidth: 0.085,
       dirtInfluence: 0.08,
     });
-    launchGrass.name = 'backdrop.launch-meadow';
-    this.#scene.add(launchGrass);
   }
 
   #buildAvatar(): void {

@@ -49,6 +49,7 @@ export const ARRIVAL_SLICE_IDS = {
   contentArrivalShoreCoral: 'content.arrival-shore.scatter.coral',
   contentArrivalShoreReed: 'content.arrival-shore.scatter.reed',
   contentArrivalShoreGrass: 'content.arrival-shore.scatter.grass',
+  contentArrivalShoreMeadow: 'content.arrival-shore.scatter.meadow',
   contentArrivalShoreGrassLaunch: 'content.arrival-shore.scatter.grass.launch',
   contentArrivalChime: 'content.arrival-chime',
   contentCrossing: 'content.arrival-crossing',
@@ -66,6 +67,8 @@ export const ARRIVAL_SLICE_IDS = {
   visualGeneratorScatterCoral: 'visual.generator.scatter-coral',
   visualGeneratorScatterReed: 'visual.generator.scatter-reed',
   visualGeneratorScatterGrass: 'visual.generator.scatter-grass',
+  visualGeneratorScatterMeadow: 'visual.generator.scatter-meadow',
+  visualGeneratorScatterLaunchGrass: 'visual.generator.scatter-launch-grass',
   visualGeneratorSilhouetteForestBasin: 'visual.generator.silhouette-forest-basin',
   visualGeneratorSilhouetteWindCanyon: 'visual.generator.silhouette-wind-canyon',
   visualGeneratorSilhouetteSkyRuin: 'visual.generator.silhouette-sky-ruin',
@@ -74,6 +77,8 @@ export const ARRIVAL_SLICE_IDS = {
   visualArchetypeScatterCoral: 'visual.archetype.scatter.coral',
   visualArchetypeScatterReed: 'visual.archetype.scatter.reed',
   visualArchetypeScatterGrass: 'visual.archetype.scatter.grass',
+  visualArchetypeScatterMeadow: 'visual.archetype.scatter.meadow',
+  visualArchetypeScatterLaunchGrass: 'visual.archetype.scatter.launch-grass',
   visualArchetypeSilhouetteForestBasin: 'visual.archetype.silhouette.forest-basin',
   visualArchetypeSilhouetteWindCanyon: 'visual.archetype.silhouette.wind-canyon',
   visualArchetypeSilhouetteSkyRuin: 'visual.archetype.silhouette.sky-ruin',
@@ -179,6 +184,14 @@ export const ARRIVAL_VISUAL_GENERATORS = {
       id: ARRIVAL_SLICE_IDS.visualGeneratorScatterGrass,
       kind: 'scatter',
     },
+    'scatter-meadow': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorScatterMeadow,
+      kind: 'scatter',
+    },
+    'scatter-launch-grass': {
+      id: ARRIVAL_SLICE_IDS.visualGeneratorScatterLaunchGrass,
+      kind: 'scatter',
+    },
   },
   silhouette: {
     'silhouette-forest-basin': {
@@ -221,6 +234,16 @@ export const ARRIVAL_VISUAL_ARCHETYPES = {
       id: ARRIVAL_SLICE_IDS.visualArchetypeScatterGrass,
       kind: 'scatter',
       generator: 'scatter-grass',
+    },
+    meadow: {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeScatterMeadow,
+      kind: 'scatter',
+      generator: 'scatter-meadow',
+    },
+    'launch-grass': {
+      id: ARRIVAL_SLICE_IDS.visualArchetypeScatterLaunchGrass,
+      kind: 'scatter',
+      generator: 'scatter-launch-grass',
     },
   },
   silhouette: {
@@ -376,13 +399,24 @@ export const ARRIVAL_SLICE_CONTENT = {
         maximumScale: 1.4,
       },
       {
+        id: ARRIVAL_SLICE_IDS.contentArrivalShoreMeadow,
+        archetype: 'meadow',
+        count: 11_000,
+        // Preserve the pre-descriptor backdrop meadow stream while moving it
+        // onto the canonical content ID used by every other scatter.
+        seedOffset: 0x3061_97f4,
+        radiusMeters: 75,
+        minimumScale: 0.62,
+        maximumScale: 1.5,
+      },
+      {
         id: ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
-        archetype: 'grass',
+        archetype: 'launch-grass',
         count: 53_000,
         seedOffset: 503,
-        radiusMeters: 78,
-        minimumScale: 0.65,
-        maximumScale: 1.4,
+        radiusMeters: 16,
+        minimumScale: 0.42,
+        maximumScale: 0.92,
       },
     ],
     guidance: ['loom-silhouette', 'resonance-ribbon', 'path-value-contrast', 'wind-direction'],
