@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import {
   WORLD_CELL_SIZE,
   type DurableEvent,
+  type InputFrame,
   type SimulationError,
   type SimulationReady,
   type SimulationSnapshot,
@@ -92,6 +93,9 @@ export function GameView({
     let unsubscribeEvent: (() => void) | null = null;
     let unsubscribeError: (() => void) | null = null;
     let latestSnapshot: SimulationSnapshot | null = null;
+    // Snapshots acknowledge only a sequence number. E2E builds retain the sampled
+    // frames long enough to expose the exact yaw and movement axes that sequence carried.
+    const sampledInputs = TEST_HOOKS_ENABLED ? new Map<number, InputFrame>() : undefined;
     let inputAccumulator = 0;
     let inputSequence = 1;
     let previousTime = performance.now();
@@ -145,7 +149,9 @@ export function GameView({
         inputAccumulator += deltaSeconds;
         while (inputAccumulator >= INPUT_INTERVAL_SECONDS) {
           const intendedTick = (latestSnapshot?.tick ?? 0) + 1;
-          transport.sendInput(input.sample(inputSequence, intendedTick));
+          const sampledInput = input.sample(inputSequence, intendedTick);
+          sampledInputs?.set(sampledInput.sequence, sampledInput);
+          transport.sendInput(sampledInput);
           inputSequence += 1;
           inputAccumulator -= INPUT_INTERVAL_SECONDS;
         }
@@ -217,6 +223,7 @@ export function GameView({
             position: { x: 0, y: 0, z: 0 },
             yaw: 0,
             camera: { yaw: 0, pitch: -0.24 },
+            acknowledgedInput: { sequence: 0, moveX: 0, moveZ: 0, lookYaw: 0 },
             setCamera: (yaw, pitch) => {
               input?.setCamera(yaw, pitch);
             },
@@ -248,6 +255,18 @@ export function GameView({
               z: player.position.cellZ * WORLD_CELL_SIZE + player.position.localZ,
             };
             hook.yaw = player.yaw;
+          }
+          const acknowledgedInput = sampledInputs?.get(snapshot.acknowledgedInputSequence);
+          if (sampledInputs !== undefined && acknowledgedInput !== undefined) {
+            hook.acknowledgedInput = {
+              sequence: acknowledgedInput.sequence,
+              moveX: acknowledgedInput.moveX,
+              moveZ: acknowledgedInput.moveZ,
+              lookYaw: acknowledgedInput.lookYaw,
+            };
+            for (const sequence of sampledInputs.keys()) {
+              if (sequence <= acknowledgedInput.sequence) sampledInputs.delete(sequence);
+            }
           }
           hook.tick = snapshot.tick;
         });

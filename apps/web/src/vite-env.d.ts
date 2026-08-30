@@ -6,6 +6,12 @@ interface VibesTestHook {
   position: { x: number; y: number; z: number };
   yaw: number;
   camera: { yaw: number; pitch: number };
+  acknowledgedInput: {
+    sequence: number;
+    moveX: number;
+    moveZ: number;
+    lookYaw: number;
+  };
   setCamera: (yaw: number, pitch: number) => void;
   frames: number;
   contextLost: boolean;

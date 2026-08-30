@@ -13,6 +13,12 @@ interface VibesTestHook {
     readonly yaw: number;
     readonly pitch: number;
   };
+  readonly acknowledgedInput: {
+    readonly sequence: number;
+    readonly moveX: number;
+    readonly moveZ: number;
+    readonly lookYaw: number;
+  };
   readonly setCamera?: (yaw: number, pitch: number) => void;
   readonly frames: number;
   readonly contextLost: boolean;
@@ -28,6 +34,13 @@ interface VibesTestHook {
 
 interface RuntimeFailureCapture {
   readonly failures: string[];
+}
+
+interface ExpectedAcknowledgedInput {
+  readonly afterSequence: number;
+  readonly moveX?: number;
+  readonly moveZ?: number;
+  readonly lookYaw?: number;
 }
 
 function isBrowserDriverDiagnostic(message: string): boolean {
@@ -113,12 +126,38 @@ async function readTestHook(page: Page): Promise<VibesTestHook> {
       position: { ...hook.position },
       yaw: hook.yaw,
       camera: { ...hook.camera },
+      acknowledgedInput: { ...hook.acknowledgedInput },
       frames: hook.frames,
       contextLost: hook.contextLost,
       paused: hook.paused,
       avatar: { ...hook.avatar, clips: [...hook.avatar.clips] },
     };
   });
+}
+
+async function waitForAcknowledgedInput(
+  page: Page,
+  expected: ExpectedAcknowledgedInput,
+): Promise<VibesTestHook> {
+  await page.waitForFunction((target) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    const input = hook?.acknowledgedInput;
+    if (input === undefined || input.sequence <= target.afterSequence) return false;
+
+    const matches = (actual: number, value: number | undefined): boolean =>
+      value === undefined || Math.abs(actual - value) < 0.000_001;
+    return (
+      matches(input.moveX, target.moveX) &&
+      matches(input.moveZ, target.moveZ) &&
+      matches(input.lookYaw, target.lookYaw)
+    );
+  }, expected);
+
+  return readTestHook(page);
 }
 
 async function attachHookOnFailure(page: Page, testInfo: TestInfo): Promise<void> {
@@ -203,16 +242,12 @@ test('loads the production world and advances the simulation', async ({ page }) 
     if (hook?.setCamera === undefined) throw new Error('Camera diagnostics are unavailable');
     hook.setCamera(yaw, hook.camera.pitch);
   }, -Math.PI / 2);
-  await page.waitForFunction((beforeYaw) => {
-    const hook = (
-      globalThis as typeof globalThis & {
-        __VIBES_TEST__?: VibesTestHook;
-      }
-    ).__VIBES_TEST__;
-    return Boolean(hook && Math.abs(hook.camera.yaw - beforeYaw) > 0.35);
-  }, beforeTurn.camera.yaw);
-
-  const settled = await readTestHook(page);
+  const settled = await waitForAcknowledgedInput(page, {
+    afterSequence: beforeTurn.acknowledgedInput.sequence,
+    moveX: 0,
+    moveZ: 0,
+    lookYaw: -Math.PI / 2,
+  });
   await page.keyboard.down('w');
 
   await page.waitForFunction((before) => {
@@ -254,8 +289,8 @@ test('loads the production world and advances the simulation', async ({ page }) 
   const displacementX = moved.position.x - settled.position.x;
   const displacementZ = moved.position.z - settled.position.z;
   const displacement = Math.hypot(displacementX, displacementZ);
-  const cameraForwardX = -Math.sin(settled.camera.yaw);
-  const cameraForwardZ = -Math.cos(settled.camera.yaw);
+  const cameraForwardX = -Math.sin(settled.acknowledgedInput.lookYaw);
+  const cameraForwardZ = -Math.cos(settled.acknowledgedInput.lookYaw);
   const facingX = -Math.sin(moved.yaw);
   const facingZ = -Math.cos(moved.yaw);
 
@@ -372,13 +407,24 @@ test('pauses and releases held movement when the browser loses focus', async ({ 
     ).__VIBES_TEST__;
     return hook?.paused === false;
   });
-  const resumed = await readTestHook(page);
-  await page.waitForTimeout(250);
+  const released = await waitForAcknowledgedInput(page, {
+    afterSequence: paused.acknowledgedInput.sequence,
+    moveX: 0,
+    moveZ: 0,
+  });
+  await page.waitForFunction((beforeTick) => {
+    const hook = (
+      globalThis as typeof globalThis & {
+        __VIBES_TEST__?: VibesTestHook;
+      }
+    ).__VIBES_TEST__;
+    return Boolean(hook && hook.tick >= beforeTick + 4);
+  }, released.tick);
   const settled = await readTestHook(page);
   await page.keyboard.up('w');
 
   expect(
-    Math.hypot(settled.position.x - resumed.position.x, settled.position.z - resumed.position.z),
+    Math.hypot(settled.position.x - released.position.x, settled.position.z - released.position.z),
   ).toBeLessThan(0.05);
 });
 
