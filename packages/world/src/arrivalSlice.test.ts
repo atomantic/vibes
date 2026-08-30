@@ -33,6 +33,9 @@ describe('Arrival slice definition', () => {
     expect(ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch).toBe(
       'content.arrival-shore.scatter.grass.launch',
     );
+    expect(ARRIVAL_SLICE_IDS.contentArrivalShoreMeadow).toBe(
+      'content.arrival-shore.scatter.meadow',
+    );
     expect(ARRIVAL_SLICE_POSITIONS.arrivalSpawn).toEqual({ x: 0, y: 2, z: 112 });
     expect(ARRIVAL_SLICE_POSITIONS.arrivalChime).toEqual({ x: 4, y: 11, z: 37 });
     expect(ARRIVAL_SLICE_POSITIONS.loom).toEqual({ x: 0, y: 12, z: 0 });
@@ -54,20 +57,42 @@ describe('Arrival slice definition', () => {
     const rock = scatter.find(({ archetype }) => archetype === 'rock');
     const coral = scatter.find(({ archetype }) => archetype === 'coral');
     const grass = scatter.find(({ archetype }) => archetype === 'grass');
+    const meadow = scatter.find(({ archetype }) => archetype === 'meadow');
     const launchGrass = scatter.find(
       ({ id }) => id === ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
     );
     expect(rock).toBeDefined();
     expect(coral).toBeDefined();
     expect(grass).toBeDefined();
+    expect(meadow).toBeDefined();
     expect(launchGrass).toBeDefined();
     if (
       rock === undefined ||
       coral === undefined ||
       grass === undefined ||
+      meadow === undefined ||
       launchGrass === undefined
     )
       return;
+
+    expect(meadow).toEqual({
+      id: ARRIVAL_SLICE_IDS.contentArrivalShoreMeadow,
+      archetype: 'meadow',
+      count: 11_000,
+      seedOffset: 0x3061_97f4,
+      radiusMeters: 75,
+      minimumScale: 0.62,
+      maximumScale: 1.5,
+    });
+    expect(launchGrass).toEqual({
+      id: ARRIVAL_SLICE_IDS.contentArrivalShoreGrassLaunch,
+      archetype: 'launch-grass',
+      count: 53_000,
+      seedOffset: 503,
+      radiusMeters: 16,
+      minimumScale: 0.42,
+      maximumScale: 0.92,
+    });
 
     const sample = (contentId: string, seedOffset: number, count: number): number[] => {
       const random = createSeededRandomStream(ARRIVAL_SLICE_SEED, contentId, seedOffset);
@@ -100,6 +125,10 @@ describe('Arrival slice definition', () => {
     expect(sample(grass.id, grass.seedOffset, 8)).not.toEqual(
       sample(launchGrass.id, launchGrass.seedOffset, 8),
     );
+    expect(sample(meadow.id, meadow.seedOffset, 8)).toEqual([
+      0.8991852256003767, 0.1310932943597436, 0.3694652896374464, 0.18687404482625425,
+      0.0005752253346145153, 0.039954472333192825, 0.36984848277643323, 0.24957413133233786,
+    ]);
     expect(sample(rock.id, rock.seedOffset, 4)).toEqual([
       0.9442654587328434, 0.13359356671571732, 0.08415482798591256, 0.06057725730352104,
     ]);
@@ -114,6 +143,16 @@ describe('Arrival slice definition', () => {
       id: 'visual.archetype.scatter.rock',
       kind: 'scatter',
       generator: 'scatter-rock',
+    });
+    expect(ARRIVAL_VISUAL_ARCHETYPES.scatter.meadow).toEqual({
+      id: 'visual.archetype.scatter.meadow',
+      kind: 'scatter',
+      generator: 'scatter-meadow',
+    });
+    expect(ARRIVAL_VISUAL_ARCHETYPES.scatter['launch-grass']).toEqual({
+      id: 'visual.archetype.scatter.launch-grass',
+      kind: 'scatter',
+      generator: 'scatter-launch-grass',
     });
     expect(ARRIVAL_VISUAL_ARCHETYPES.silhouette['forest-basin'].generator).toBe(
       'silhouette-forest-basin',
