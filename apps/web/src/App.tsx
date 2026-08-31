@@ -52,6 +52,46 @@ function distanceTo(position: PlayerPosition, target: PlayerPosition): number {
   return Math.hypot(position.x - target.x, position.y - target.y, position.z - target.z);
 }
 
+function interactionPrompt(
+  started: boolean,
+  paused: boolean,
+  fatalError: string | null,
+  objective: ObjectiveSnapshot,
+  position: PlayerPosition,
+): string | null {
+  if (!started || paused || fatalError !== null) return null;
+
+  const chimeDistance = distanceTo(position, ARRIVAL_SLICE_POSITIONS.arrivalChime);
+  const loomDistance = distanceTo(position, ARRIVAL_SLICE_POSITIONS.loom);
+  const chimeInteraction = ARRIVAL_SLICE_DEFINITION.interactions.find(
+    ({ persistentStateKey }) => persistentStateKey === 'arrivalChimeActivated',
+  );
+  const loomInteraction = ARRIVAL_SLICE_DEFINITION.interactions.find(
+    ({ persistentStateKey }) => persistentStateKey === 'loomAwakened',
+  );
+  if (
+    !objective.arrivalChimeActivated &&
+    chimeInteraction !== undefined &&
+    chimeDistance <= chimeInteraction.radiusMeters
+  ) {
+    return `E  ·  ${chimeInteraction.prompt}`;
+  }
+  if (
+    objective.arrivalChimeActivated &&
+    !objective.loomAwakened &&
+    loomInteraction !== undefined &&
+    loomDistance <= Math.max(loomInteraction.radiusMeters + 5, 8)
+  ) {
+    const hiddenShards = ARRIVAL_ECHO_SHARDS.length - objective.collectedEchoShards.length;
+    return objective.collectedEchoShards.length >= ARRIVAL_ECHO_SHARDS.length
+      ? `E  ·  ${loomInteraction.prompt}`
+      : `The Loom sleeps — ${String(hiddenShards)} Echo Shard${
+          hiddenShards === 1 ? '' : 's'
+        } still hidden.`;
+  }
+  return null;
+}
+
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1_000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -103,7 +143,6 @@ export function App(): React.JSX.Element {
     drawCalls: 0,
     triangles: 0,
   });
-  const [prompt, setPrompt] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [settingsPersistenceStatus, setSettingsPersistenceStatus] = useState('');
   const [progressPersistenceStatus, setProgressPersistenceStatus] = useState('');
@@ -138,6 +177,7 @@ export function App(): React.JSX.Element {
   const journeyTimeMs =
     completedJourneyTimeRef.current ?? Math.round((tick / simulationTickRateRef.current) * 1_000);
   const collectedShardCount = objective.collectedEchoShards.length;
+  const prompt = interactionPrompt(started, paused, fatalError, objective, position);
 
   const showAnnouncement = useCallback((message: string): void => {
     if (announcementTimeoutRef.current !== undefined) {
@@ -283,46 +323,6 @@ export function App(): React.JSX.Element {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [beginJourney, celebrationOpen, showAnnouncement, started, status]);
-
-  useEffect(() => {
-    if (!started || paused || fatalError !== null) {
-      setPrompt(null);
-      return;
-    }
-    const chimeDistance = distanceTo(position, ARRIVAL_SLICE_POSITIONS.arrivalChime);
-    const loomDistance = distanceTo(position, ARRIVAL_SLICE_POSITIONS.loom);
-    const chimeInteraction = ARRIVAL_SLICE_DEFINITION.interactions.find(
-      ({ persistentStateKey }) => persistentStateKey === 'arrivalChimeActivated',
-    );
-    const loomInteraction = ARRIVAL_SLICE_DEFINITION.interactions.find(
-      ({ persistentStateKey }) => persistentStateKey === 'loomAwakened',
-    );
-    if (
-      !objective.arrivalChimeActivated &&
-      chimeInteraction !== undefined &&
-      chimeDistance <= chimeInteraction.radiusMeters
-    ) {
-      setPrompt(`E  ·  ${chimeInteraction.prompt}`);
-      return;
-    }
-    if (
-      objective.arrivalChimeActivated &&
-      !objective.loomAwakened &&
-      loomInteraction !== undefined &&
-      loomDistance <= Math.max(loomInteraction.radiusMeters + 5, 8)
-    ) {
-      const hiddenShards = ARRIVAL_ECHO_SHARDS.length - objective.collectedEchoShards.length;
-      setPrompt(
-        objective.collectedEchoShards.length >= ARRIVAL_ECHO_SHARDS.length
-          ? `E  ·  ${loomInteraction.prompt}`
-          : `The Loom sleeps — ${String(hiddenShards)} Echo Shard${
-              hiddenShards === 1 ? '' : 's'
-            } still hidden.`,
-      );
-      return;
-    }
-    setPrompt(null);
-  }, [fatalError, objective, paused, position, started]);
 
   const handleReady = useCallback((ready: SimulationReady): void => {
     simulationTickRateRef.current = ready.tickRate;
