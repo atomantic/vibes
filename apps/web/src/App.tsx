@@ -349,7 +349,8 @@ export function App(): React.JSX.Element {
         });
       } else if (event.code === 'F3') {
         event.preventDefault();
-        setDiagnostics((value) => !value);
+        // Diagnostics are part of the HUD; ignore F3 in clean view so it cannot flip invisibly.
+        if (!hudHidden) setDiagnostics((value) => !value);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -414,6 +415,8 @@ export function App(): React.JSX.Element {
         arrivalTimerActiveRef.current = false;
         if (!celebrationShownRef.current) {
           celebrationShownRef.current = true;
+          // The one-shot celebration must not be consumed invisibly.
+          setHudHidden(false);
           setCelebrationOpen(true);
         }
       }
@@ -835,7 +838,7 @@ export function App(): React.JSX.Element {
               showAnnouncement('HUD hidden. Press H or Escape to show it.');
             }}
           >
-            Hide HUD for screenshots <kbd>H</kbd>
+            Hide HUD for screenshots
           </button>
           <button className="text-button" type="button" onClick={restartJourney}>
             Restart journey
