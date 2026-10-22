@@ -33,7 +33,8 @@ test('H hides the HUD and Escape restores it before pausing', async ({ page }) =
   await expect(page.locator('.announcement')).toHaveText(/HUD hidden/);
   await expectHud(page, false);
   // Live announcements stay in the accessibility tree while hidden.
-  await expect(page.locator('.announcement')).toBeAttached();
+  await expect(page.locator('.announcement')).toHaveCSS('display', 'block');
+  await expect(page.locator('.announcement')).toHaveCSS('width', '1px');
   await expect(page.getByRole('status')).toHaveText('World ready');
   await expect(page.locator('#game-control-instructions')).toContainText('H to hide');
 
@@ -41,8 +42,17 @@ test('H hides the HUD and Escape restores it before pausing', async ({ page }) =
   await expectHud(page, true);
   await expect(page.getByRole('dialog', { name: 'Paused' })).toHaveCount(0);
 
-  await page.keyboard.press('Control+KeyH');
+  for (const chord of ['Control+KeyH', 'Alt+KeyH', 'Meta+KeyH']) {
+    await page.keyboard.press(chord);
+    await expectHud(page, true);
+  }
+
+  // F3 cannot flip diagnostics invisibly while the HUD is hidden.
+  await page.keyboard.press('KeyH');
+  await page.keyboard.press('F3');
+  await page.keyboard.press('Escape');
   await expectHud(page, true);
+  await expect(page.getByLabel('World diagnostics')).toHaveCount(0);
 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Paused' })).toBeVisible();
