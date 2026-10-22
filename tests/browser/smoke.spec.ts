@@ -250,7 +250,12 @@ test('loads the production world and advances the simulation', async ({ page }) 
   });
   await page.keyboard.down('w');
 
-  await page.waitForFunction((before) => {
+  // Measure travel at the first frame that shows it. The run and jump checks
+  // below poll once per rendered frame, and on a software-rendered CI runner
+  // that can take long enough for the held key to carry the avatar out of the
+  // world bounds, where the simulation respawns it at the checkpoint and a
+  // sample taken after key-up reads as zero displacement.
+  const travelling = await page.waitForFunction((before) => {
     const hook = (
       globalThis as typeof globalThis & {
         __VIBES_TEST__?: VibesTestHook;
@@ -262,8 +267,12 @@ test('loads the production world and advances the simulation', async ({ page }) 
 
     const horizontalMovement =
       Math.abs(hook.position.x - before.position.x) + Math.abs(hook.position.z - before.position.z);
-    return horizontalMovement > 0.5;
+    return horizontalMovement > 0.5
+      ? { tick: hook.tick, position: { ...hook.position }, yaw: hook.yaw }
+      : false;
   }, settled);
+  const moved = await travelling.jsonValue();
+  if (moved === false) throw new Error('Movement sample was not captured');
 
   await page.waitForFunction(() => {
     const hook = (
@@ -285,7 +294,7 @@ test('loads the production world and advances the simulation', async ({ page }) 
 
   await page.keyboard.up('w');
 
-  const moved = await readTestHook(page);
+  const afterRun = await readTestHook(page);
   const displacementX = moved.position.x - settled.position.x;
   const displacementZ = moved.position.z - settled.position.z;
   const displacement = Math.hypot(displacementX, displacementZ);
@@ -303,7 +312,7 @@ test('loads the production world and advances the simulation', async ({ page }) 
     (displacementX * cameraForwardX + displacementZ * cameraForwardZ) / displacement,
   ).toBeGreaterThan(0.85);
   expect((displacementX * facingX + displacementZ * facingZ) / displacement).toBeGreaterThan(0.85);
-  expect(moved.contextLost).toBe(false);
+  expect(afterRun.contextLost).toBe(false);
 });
 
 test('pauses simulation ticks while rendering remains responsive', async ({ page }) => {
