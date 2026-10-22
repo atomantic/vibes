@@ -30,6 +30,7 @@ test('H hides the HUD and Escape restores it before pausing', async ({ page }) =
   await expectHud(page, true);
 
   await page.keyboard.press('KeyH');
+  await expect(page.locator('.announcement')).toHaveText(/HUD hidden/);
   await expectHud(page, false);
   // Live announcements stay in the accessibility tree while hidden.
   await expect(page.locator('.announcement')).toBeAttached();
@@ -40,7 +41,12 @@ test('H hides the HUD and Escape restores it before pausing', async ({ page }) =
   await expectHud(page, true);
   await expect(page.getByRole('dialog', { name: 'Paused' })).toHaveCount(0);
 
+  await page.keyboard.press('Control+KeyH');
+  await expectHud(page, true);
+
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Paused' })).toBeVisible();
+  await page.keyboard.press('KeyH');
   await expect(page.getByRole('dialog', { name: 'Paused' })).toBeVisible();
 });
 
@@ -57,7 +63,7 @@ test('pause-menu control hides the HUD and pausing restores it', async ({ page }
   await expectHud(page, true);
 });
 
-test('H is ignored while typing in a form control ', async ({ page }) => {
+test('H is ignored while typing in a form control', async ({ page }) => {
   await enterWorld(page);
   await page.evaluate(() => {
     const input = document.createElement('input');
