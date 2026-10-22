@@ -92,6 +92,16 @@ function interactionPrompt(
   return null;
 }
 
+function isFormControl(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+  );
+}
+
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1_000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -129,6 +139,8 @@ export function App(): React.JSX.Element {
   const [started, setStarted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
+  // Session-only presentation state: never persisted, so every load starts with the HUD visible.
+  const [hudHidden, setHudHidden] = useState(false);
   const [settings, setSettings] = useState<PlayerSettings>(readPlayerSettings);
   const [objective, setObjective] = useState<ObjectiveSnapshot>(DEFAULT_OBJECTIVE);
   const [position, setPosition] = useState<PlayerPosition>({
@@ -178,6 +190,7 @@ export function App(): React.JSX.Element {
   const journeyTimeMs =
     completedJourneyTimeRef.current ?? Math.round((tick / simulationTickRateRef.current) * 1_000);
   const collectedShardCount = objective.collectedEchoShards.length;
+  const cleanView = hudHidden && started && !paused && fatalError === null;
   const prompt = interactionPrompt(started, paused, fatalError, objective, position);
 
   const showAnnouncement = useCallback((message: string): void => {
@@ -302,11 +315,31 @@ export function App(): React.JSX.Element {
       if (event.code === 'Enter' && !started && status === 'World ready') {
         beginJourney();
       } else if (event.code === 'Escape' && started) {
+        if (hudHidden) {
+          setHudHidden(false);
+          showAnnouncement('HUD shown.');
+          return;
+        }
         if (celebrationOpen) {
           setCelebrationOpen(false);
           return;
         }
         setPaused((value) => !value);
+      } else if (
+        event.code === 'KeyH' &&
+        started &&
+        !paused &&
+        fatalError === null &&
+        !event.repeat &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !isFormControl(event.target)
+      ) {
+        event.preventDefault();
+        const nextHidden = !hudHidden;
+        setHudHidden(nextHidden);
+        showAnnouncement(nextHidden ? 'HUD hidden. Press H or Escape to show it.' : 'HUD shown.');
       } else if (event.code === 'KeyM' && started) {
         event.preventDefault();
         setSettings((current) => {
@@ -323,7 +356,27 @@ export function App(): React.JSX.Element {
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [beginJourney, celebrationOpen, showAnnouncement, started, status]);
+  }, [
+    beginJourney,
+    celebrationOpen,
+    fatalError,
+    hudHidden,
+    paused,
+    showAnnouncement,
+    started,
+    status,
+  ]);
+
+  // Losing focus (for example to an OS screenshot tool or another window) never leaves the HUD hidden.
+  useEffect(() => {
+    const showHud = (): void => {
+      setHudHidden(false);
+    };
+    window.addEventListener('blur', showHud);
+    return () => {
+      window.removeEventListener('blur', showHud);
+    };
+  }, []);
 
   const handleReady = useCallback((ready: SimulationReady): void => {
     simulationTickRateRef.current = ready.tickRate;
@@ -466,6 +519,7 @@ export function App(): React.JSX.Element {
       } else {
         setStarted(false);
         setPaused(false);
+        setHudHidden(false);
         setFatalError(error.message);
         setStatus('World unavailable');
       }
@@ -474,6 +528,7 @@ export function App(): React.JSX.Element {
   );
 
   const handlePauseRequest = useCallback((): void => {
+    setHudHidden(false);
     setPaused(true);
   }, []);
 
@@ -494,7 +549,11 @@ export function App(): React.JSX.Element {
   };
 
   return (
-    <main className="game-shell" aria-label="Vibes game">
+    <main
+      className="game-shell"
+      aria-label="Vibes game"
+      data-hud={cleanView ? 'hidden' : 'visible'}
+    >
       <GameView
         active={started}
         paused={paused}
@@ -513,8 +572,9 @@ export function App(): React.JSX.Element {
 
       <p id={GAME_CONTROLS_DESCRIPTION_ID} className="screen-reader-only">
         Keyboard controls: press Enter to begin, W A S D to move, Shift to sprint, Space to jump, E
-        to interact, Escape to pause, and F3 to toggle diagnostics. Click the game world to look
-        with the mouse.
+        to interact, M to toggle sound, H to hide or show the on-screen display, Escape to restore
+        the display or pause, and F3 to toggle diagnostics. Click the game world to look with the
+        mouse.
       </p>
 
       <div className="cinematic-vignette" aria-hidden="true" />
@@ -614,6 +674,7 @@ export function App(): React.JSX.Element {
             <span>Space jump</span>
             <span>Hold Space glide</span>
             <span>M sound</span>
+            <span>H hide HUD</span>
             <span>F3 diagnostics</span>
           </div>
         </>
@@ -765,6 +826,17 @@ export function App(): React.JSX.Element {
               }}
             />
           </label>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => {
+              setHudHidden(true);
+              setPaused(false);
+              showAnnouncement('HUD hidden. Press H or Escape to show it.');
+            }}
+          >
+            Hide HUD for screenshots <kbd>H</kbd>
+          </button>
           <button className="text-button" type="button" onClick={restartJourney}>
             Restart journey
           </button>

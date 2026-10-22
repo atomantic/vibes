@@ -20,7 +20,7 @@ pnpm dev
 
 Open [http://127.0.0.1:5175](http://127.0.0.1:5175), or use the local URL printed by Vite. The development server hot-reloads source changes; no manual UI rebuild is needed. `pnpm preview` serves a production bundle instead, and `pnpm test:e2e` always rebuilds that bundle before testing it.
 
-Use `WASD` to move, Shift to sprint, Space to jump, hold Space in the air to glide, the mouse to look, `E` to interact, `M` to toggle sound, Escape to pause, and `F3` for diagnostics. A connected standard gamepad is also supported.
+Use `WASD` to move, Shift to sprint, Space to jump, hold Space in the air to glide, the mouse to look, `E` to interact, `M` to toggle sound, `H` to hide the on-screen display for screenshots (Escape brings it back), Escape to pause, and `F3` for diagnostics. A connected standard gamepad is also supported.
 
 Run the complete local quality gate with `pnpm check`; run production browser smoke tests with `pnpm test:e2e`. See [Contributing](./CONTRIBUTING.md) for setup details and [implementation status](./docs/IMPLEMENTATION_STATUS.md) for exact scope and open proof obligations.
 

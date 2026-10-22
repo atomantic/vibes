@@ -890,3 +890,33 @@ kbd {
     color: ButtonText;
   }
 }
+
+/* Clean view: hides decorative HUD for screenshots while live regions stay available to assistive tech. */
+.game-shell[data-hud='hidden']
+  :is(
+    .brand-lockup,
+    .objective-card,
+    .landmark-compass,
+    .crosshair,
+    .interaction-prompt,
+    .control-hint,
+    .celebration-card,
+    .diagnostics
+  ) {
+  display: none;
+}
+
+.game-shell[data-hud='hidden'] :is(.world-status, .announcement, .save-status) {
+  position: absolute;
+  inset: auto;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  transform: none;
+}
