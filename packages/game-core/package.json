@@ -17,6 +17,6 @@
     "@dimforge/rapier3d": "0.19.3",
     "@vibes/protocol": "workspace:*",
     "@vibes/world": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   }
 }
